@@ -67,9 +67,8 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
 dialog h2 { margin: 0 0 18px; font-size: 18px; }
 .connection-grid { display: grid; grid-template-columns: 1fr 120px; gap: 12px; }
 .connection-grid label { display: grid; gap: 5px; color: var(--vscode-descriptionForeground); }
-.connection-grid label:nth-child(3) { grid-column: 1; }.connection-grid label:nth-child(4) { grid-column: 2; }
 .connection-grid .full { grid-column: 1 / -1; }
-.connection-grid input { width: 100%; padding: 7px 8px; color: var(--vscode-input-foreground); }
+.connection-grid input, .connection-grid select { width: 100%; padding: 7px 8px; color: var(--vscode-input-foreground); }
 .dialog-actions { margin-top: 18px; display: flex; justify-content: flex-end; gap: 8px; }
 .form-error { min-height: 18px; margin-top: 10px; color: var(--vscode-errorForeground); }
 .context-menu { position: fixed; z-index: 20; min-width: 190px; padding: 4px; background: var(--vscode-menu-background); border: 1px solid var(--vscode-menu-border); box-shadow: 0 4px 15px var(--vscode-widget-shadow); }

@@ -1,9 +1,8 @@
 Manifest-Version: 1.0
-OpenIDE-Module: be.rk22.dbgplugin
+OpenIDE-Module: com.rk22.dbgplugin
 OpenIDE-Module-Specification-Version: 1.0
 OpenIDE-Module-Implementation-Version: 1
 OpenIDE-Module-Layer: META-INF/layer.xml
 OpenIDE-Module-Display-Category: Database Tools
-OpenIDE-Module-Short-Description: MariaDB Procedure Debugger
-OpenIDE-Module-Long-Description: Step-through debugger for MariaDB stored procedures and functions. Integrates with the IDE Services window (DB Browser) for one-click deployment.
-
+OpenIDE-Module-Short-Description: MySQL Routine Debugger
+OpenIDE-Module-Long-Description: Step-through debugger for MySQL and MariaDB stored procedures and functions. Integrates with the IDE Services window (DB Browser) for one-click deployment.
