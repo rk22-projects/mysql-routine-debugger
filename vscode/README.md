@@ -3,6 +3,8 @@
 > [!CAUTION]
 > **Early alpha software:** this project has undergone only limited testing. Features may be incomplete, behavior may change without notice, and defects may modify routines or other database objects incorrectly. Do not use it with production databases. Use only isolated development or test environments and ensure you have current backups.
 
+Issue reports and help with collaborative testing are very welcome. If you try the debugger, please [open an issue](https://github.com/rk22-projects/mysql-routine-debugger/issues) to share problems, suggestions, or successful test results. Every constructive report helps make the project safer and more useful.
+
 This module integrates the MySQL Routine Debugger into Visual Studio Code. It provides a dedicated debugger panel for MySQL and MariaDB stored procedures and functions, with searchable routine selection, breakpoints, Continue, Step Into, Step Over, Step Out, variable watches, and execution logs.
 
 The extension runs its Java debugger server in the background and stores database passwords in Visual Studio Code secret storage.
