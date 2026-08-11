@@ -44,9 +44,11 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     private final JButton btnLoad    = new JButton("Load");
     private final JButton btnDeploy  = new JButton("▶ Debug");
     private final JButton btnStop    = new JButton("■ Stop Debugging");
-    private final JButton btnCont    = new JButton("▶ Continue  F5");
-    private final JButton btnStep    = new JButton("↓ Step  F8");
-    private final JLabel  statusBar  = new JLabel("Ready");
+    private final JButton btnCont     = new JButton("▶ Continue  F5");
+    private final JButton btnStep     = new JButton("↓ Step Over  F8");
+    private final JButton btnStepInto = new JButton("↘ Step Into  F7");
+    private final JButton btnStepOut  = new JButton("↑ Step Out  Ctrl+F7");
+    private final JLabel  statusBar   = new JLabel("Ready");
     private final JLabel  banner     = new JLabel();
 
     private final SourcePanel sourcePanel = new SourcePanel();
@@ -162,15 +164,17 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         routineCombo.setPreferredSize(new Dimension(200, 26));
 
         style(btnLoad,   new Color(0xE0, 0xE0, 0xE0), Color.DARK_GRAY);
-        style(btnDeploy, new Color(0x27, 0x67, 0x49), Color.WHITE);
-        style(btnStop,   new Color(0xC0, 0x39, 0x2B), Color.WHITE);
-        style(btnCont,   new Color(0x0E, 0x63, 0x9C), Color.WHITE);
-        style(btnStep,   new Color(0x6B, 0x5C, 0xE7), Color.WHITE);
+        style(btnDeploy,   new Color(0x27, 0x67, 0x49), Color.WHITE);
+        style(btnStop,     new Color(0xC0, 0x39, 0x2B), Color.WHITE);
+        style(btnCont,     new Color(0x0E, 0x63, 0x9C), Color.WHITE);
+        style(btnStep,     new Color(0x6B, 0x5C, 0xE7), Color.WHITE);
+        style(btnStepInto, new Color(0x8A, 0x6B, 0xF5), Color.WHITE);
 
         btnDeploy.setEnabled(false);
         btnStop.setEnabled(false);
         btnCont.setEnabled(false);
         btnStep.setEnabled(false);
+        btnStepInto.setEnabled(false);
 
         btnPanel.add(routineCombo);
         btnPanel.add(btnLoad);
@@ -179,6 +183,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         btnPanel.add(Box.createHorizontalStrut(12));
         btnPanel.add(btnCont);
         btnPanel.add(btnStep);
+        btnPanel.add(btnStepInto);
         toolbar.add(btnPanel, BorderLayout.CENTER);
 
         JPopupMenu overflowMenu = new JPopupMenu();
@@ -209,15 +214,18 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         lbl.setForeground(new Color(0xAD, 0xC8, 0xFF));
         lbl.setFont(lbl.getFont().deriveFont(Font.BOLD, 13f));
 
-        style(btnCont, new Color(0x0E, 0x63, 0x9C), Color.WHITE);
-        style(btnStep, new Color(0x6B, 0x5C, 0xE7), Color.WHITE);
+        style(btnCont,    new Color(0x0E, 0x63, 0x9C), Color.WHITE);
+        style(btnStep,    new Color(0x6B, 0x5C, 0xE7), Color.WHITE);
+        style(btnStepOut, new Color(0x4A, 0x6B, 0x8A), Color.WHITE);
         btnCont.setEnabled(false);
         btnStep.setEnabled(false);
+        btnStepOut.setEnabled(false);
 
         toolbar.add(lbl);
         toolbar.add(Box.createHorizontalStrut(8));
         toolbar.add(btnCont);
         toolbar.add(btnStep);
+        toolbar.add(btnStepOut);
         topArea.add(toolbar, BorderLayout.NORTH);
     }
 
@@ -235,7 +243,6 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
     private void wireActions() {
         btnCont.addActionListener(e -> doContinue());
-        btnStep.addActionListener(e -> doStep());
 
         logPanel.setOnClear(this::clearLog);
 
@@ -258,19 +265,30 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         sourcePanel.setOnAddWatch(watchPanel::addVariable);
 
         if (!isChild) {
-            btnLoad.addActionListener(e   -> loadRoutine());
-            btnDeploy.addActionListener(e -> deployDebug());
-            btnStop.addActionListener(e   -> stopDebugging());
+            btnLoad.addActionListener(e      -> loadRoutine());
+            btnDeploy.addActionListener(e    -> deployDebug());
+            btnStop.addActionListener(e      -> stopDebugging());
+            btnStep.addActionListener(e      -> doStepOver());
+            btnStepInto.addActionListener(e  -> doStepInto());
+        } else {
+            btnStep.addActionListener(e      -> doStep());
+            btnStepOut.addActionListener(e   -> doStepOut());
         }
 
-        // F5 / F8 via KeyboardFocusManager so NetBeans doesn't swallow them first.
+        // F5 / F7 / F8 / Ctrl+F7 via KeyboardFocusManager so NetBeans doesn't swallow them.
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(evt -> {
             if (evt.getID() != KeyEvent.KEY_PRESSED) return false;
             if (!isShowing()) return false;
             if (WindowManager.getDefault().getRegistry().getActivated() != this) return false;
             if (session == null || !session.isPaused()) return false;
             if (evt.getKeyCode() == KeyEvent.VK_F5) { doContinue(); return true; }
-            if (evt.getKeyCode() == KeyEvent.VK_F8) { doStep();     return true; }
+            if (!isChild) {
+                if (evt.getKeyCode() == KeyEvent.VK_F8) { doStepOver(); return true; }
+                if (evt.getKeyCode() == KeyEvent.VK_F7) { doStepInto(); return true; }
+            } else {
+                if (evt.getKeyCode() == KeyEvent.VK_F8) { doStep();    return true; }
+                if (evt.getKeyCode() == KeyEvent.VK_F7 && evt.isControlDown()) { doStepOut(); return true; }
+            }
             return false;
         });
     }
@@ -425,7 +443,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
                     if (calleeType == null) continue;
                     String calleeSid = newSessionId();
                     String calleeDdl = db.fetchRoutineDdl(callee, calleeType);
-                    deployRoutineToDb(callee, calleeType, calleeDdl, calleeSid, "step");
+                    deployRoutineToDb(callee, calleeType, calleeDdl, calleeSid, "running");
                     newCallees.add(new String[]{callee, calleeType, calleeSid});
                 }
 
@@ -614,6 +632,27 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         });
     }
 
+    // ── TopComponent lifecycle ────────────────────────────────────────────────
+
+    @Override
+    public void componentClosed() {
+        // When the window is closed (X button or programmatically), send 'continue'
+        // to any blocked _dbg_checkpoint wait loops so they don't spin indefinitely.
+        if (session != null && db != null) {
+            final String sid     = session.sessionId;
+            final List<String[]> callees = new ArrayList<>(deployedCallees);
+            stopSession();
+            RequestProcessor.getDefault().post(() -> {
+                try { db.updateState(sid, "continue"); } catch (DbgException ignored) {}
+                for (String[] callee : callees) {
+                    try { db.updateState(callee[2], "continue"); } catch (DbgException ignored) {}
+                }
+            });
+        } else {
+            stopSession();
+        }
+    }
+
     // ── Session management ────────────────────────────────────────────────────
 
     private void startSession(String sid) {
@@ -634,11 +673,49 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         sourcePanel.clearCurrentLine();
         watchChanged.clear();
         watchPanel.clearChanged();
+        setCalleesStatus("running");
         session.doContinue();
         setPaused(false);
         setStatus("Resumed…", false);
     }
 
+    /** Step Over — advance to next statement; callees run without pausing. */
+    private void doStepOver() {
+        if (session == null || !session.isPaused()) return;
+        sourcePanel.clearCurrentLine();
+        watchChanged.clear();
+        watchPanel.clearChanged();
+        setCalleesStatus("running");
+        session.doStep();
+        setPaused(false);
+        setStatus("Stepping over…", false);
+    }
+
+    /** Step Into — advance to next statement; if a callee is entered it will pause. */
+    private void doStepInto() {
+        if (session == null || !session.isPaused()) return;
+        sourcePanel.clearCurrentLine();
+        watchChanged.clear();
+        watchPanel.clearChanged();
+        setCalleesStatus("step");
+        for (String[] c : deployedCallees) session.registerChildSession(c[0], c[2]);
+        session.doStep();
+        setPaused(false);
+        setStatus("Stepping into…", false);
+    }
+
+    /** Step Out — run callee to completion; the parent resumes at its next checkpoint. */
+    private void doStepOut() {
+        if (session == null || !session.isPaused()) return;
+        sourcePanel.clearCurrentLine();
+        watchChanged.clear();
+        watchPanel.clearChanged();
+        session.doContinue();
+        setPaused(false);
+        setStatus("Stepping out…", false);
+    }
+
+    /** Basic step — used by child window to advance within the callee. */
     private void doStep() {
         if (session == null || !session.isPaused()) return;
         sourcePanel.clearCurrentLine();
@@ -647,6 +724,13 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         session.doStep();
         setPaused(false);
         setStatus("Stepping…", false);
+    }
+
+    private void setCalleesStatus(String status) {
+        for (String[] callee : deployedCallees) {
+            try { db.initSessionState(callee[2], callee[0], status); }
+            catch (DbgException ignored) {}
+        }
     }
 
     private void clearLog() {
@@ -670,6 +754,8 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     private void setPaused(boolean on) {
         btnCont.setEnabled(on);
         btnStep.setEnabled(on);
+        if (!isChild) btnStepInto.setEnabled(on);
+        else           btnStepOut.setEnabled(on);
         statusBar.setBackground(on ? new Color(0xC0, 0x39, 0x2B) : new Color(0x00, 0x7A, 0xCC));
     }
 
@@ -719,14 +805,10 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         if (m != null) m.dockInto(child);
         child.open();
         child.requestActive();
+        child.setStatus("Loading " + routineName + "…", false);
 
-        // Start the poll loop for this child session
-        child.startSession(sessionId);
-        child.setDebugActive(true);
-        child.setPaused(true);
-        child.setStatus("⏸  Paused in " + routineName + " (step-in)", true);
-
-        // Load callee source and breakpoints in the background
+        // Load source first, then start the session — this guarantees the doc is
+        // populated before the first onPaused fires, so setCurrentLine finds content.
         RequestProcessor.getDefault().post(() -> {
             try {
                 String ddl  = db.loadOriginalDdl(routineName);
@@ -737,9 +819,11 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
                 final String finalType = type;
                 SwingUtilities.invokeLater(() -> {
                     if (finalType != null) child.currentRoutineType = finalType;
-                    child.sourcePanel.setSource(finalDdl);
+                    child.sourcePanel.setSource(finalDdl);   // synchronous — doc ready now
                     child.sourcePanel.setBreakpoints(bps);
                     child.showBanner(routineName);
+                    child.setDebugActive(true);
+                    child.startSession(sessionId);           // first onPaused will find doc ready
                 });
             } catch (DbgException ex) {
                 SwingUtilities.invokeLater(() ->

@@ -235,15 +235,18 @@ public class InstrumentEngine {
             if (stmtComplete(accum)) {
                 String label  = "L" + accumStart;
                 String accumUp = accum.toUpperCase().stripLeading();
-                // Control-flow conditions (IF/ELSEIF/WHILE/FOR ... THEN/DO) must have
-                // their checkpoint BEFORE the statement so it fires even when the
-                // condition is false and the body is skipped entirely.
+                // Control-flow (IF/ELSEIF/WHILE/FOR … THEN/DO) and CALL statements both
+                // need the checkpoint BEFORE the statement.  For control-flow this ensures
+                // the checkpoint fires even when the condition is false and the body is
+                // skipped.  For CALL statements this is required so the parent pauses
+                // *before* the callee runs, giving step-into (F7) a chance to intercept it.
                 boolean isControlFlow =
                     Pattern.compile("^(IF|ELSEIF|WHILE|FOR)\\b").matcher(accumUp).find() &&
                     Pattern.compile("\\b(THEN|DO)\\s*$").matcher(accumUp).find();
+                boolean isCallStmt = Pattern.compile("^CALL\\b").matcher(accumUp).find();
 
                 String cp = "    CALL _dbg_checkpoint('" + sessionId + "','" + name + "','" + label + "');";
-                if (isControlFlow) {
+                if (isControlFlow || isCallStmt) {
                     out.add(stmtOutStart, cp);
                 } else {
                     out.add(cp);

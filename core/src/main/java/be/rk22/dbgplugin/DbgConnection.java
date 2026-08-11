@@ -308,7 +308,7 @@ public class DbgConnection {
         }
     }
 
-    public boolean isSessionPaused(String sessionId) throws DbgException {
+    public synchronized boolean isSessionPaused(String sessionId) throws DbgException {
         try (PreparedStatement ps = conn.prepareStatement(
                 "SELECT 1 FROM _dbg_state WHERE session_id = ? AND status = 'paused'")) {
             ps.setString(1, sessionId);

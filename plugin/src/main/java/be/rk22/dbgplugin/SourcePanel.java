@@ -100,16 +100,15 @@ public class SourcePanel extends JPanel {
     public void setVarValueLookup(Function<String, String> fn)  { this.varValueLookup   = fn; }
 
     public void setSource(String ddl) {
-        lines = (ddl == null || ddl.isEmpty()) ? new String[0] : ddl.split("\n", -1);
-        SwingUtilities.invokeLater(() -> {
-            try {
-                doc.remove(0, doc.getLength());
-                doc.insertString(0, ddl == null ? "" : ddl, null);
-                highlighter.highlight(doc, ddl == null ? "" : ddl);
-                clearCurrentLine();
-                gutter.refresh();
-            } catch (BadLocationException ignored) {}
-        });
+        String text = ddl == null ? "" : ddl;
+        lines = text.isEmpty() ? new String[0] : text.split("\n", -1);
+        try {
+            doc.remove(0, doc.getLength());
+            doc.insertString(0, text, null);
+            highlighter.highlight(doc, text);
+            clearCurrentLine();
+            gutter.refresh();
+        } catch (BadLocationException ignored) {}
     }
 
     public void setBreakpoints(Collection<String> labels) {

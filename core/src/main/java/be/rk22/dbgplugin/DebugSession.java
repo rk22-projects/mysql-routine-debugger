@@ -58,7 +58,8 @@ public class DebugSession {
      * checkpoint fires (status = 'paused'), onCalleeStarted is dispatched to the UI.
      */
     public void registerChildSession(String routineName, String sessionId) {
-        pendingChildren.add(new String[]{routineName, sessionId});
+        boolean alreadyPending = pendingChildren.stream().anyMatch(c -> c[1].equals(sessionId));
+        if (!alreadyPending) pendingChildren.add(new String[]{routineName, sessionId});
     }
 
     // ── Execution control ─────────────────────────────────────────────────────
