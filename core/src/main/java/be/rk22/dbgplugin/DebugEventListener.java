@@ -7,4 +7,6 @@ public interface DebugEventListener {
     void onPaused(String label, int lineNumber);   // lineNumber is -1 if not parseable
     void onResumed();
     void onError(String message);
+    /** Fired when a deployed callee starts executing and hits its first checkpoint. */
+    default void onCalleeStarted(String routineName, String sessionId) {}
 }
