@@ -21,7 +21,7 @@ The installers obtain the other required tools where possible. Maven does not ne
 Open a terminal and run:
 
 ```text
-git clone https://github.com/fransensteven/proc-debugger-nb.git
+git clone https://github.com/rk22-projects/proc-debugger-nb.git
 cd proc-debugger-nb
 ```
 
