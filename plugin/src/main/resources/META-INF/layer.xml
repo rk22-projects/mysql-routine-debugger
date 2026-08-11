@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE filesystem PUBLIC "-//NetBeans//DTD Filesystem 1.2//EN"
+          "http://www.netbeans.org/dtds/filesystem-1_2.dtd">
+<filesystem>
+
+    <!-- ── Action registered in the Actions pool ──────────────────────────── -->
+    <folder name="Actions">
+        <folder name="Window">
+            <file name="be-rk22-dbgplugin-OpenDebuggerAction.instance">
+                <attr name="instanceCreate" newvalue="be.rk22.dbgplugin.OpenDebuggerAction"/>
+                <attr name="position" intvalue="9999"/>
+            </file>
+        </folder>
+        <folder name="Database">
+            <file name="be-rk22-dbgplugin-DeployAction.instance">
+                <attr name="instanceCreate" methodvalue="be.rk22.dbgplugin.DeployAction.get"/>
+            </file>
+        </folder>
+    </folder>
+
+    <!-- ── Window menu entry ───────────────────────────────────────────────── -->
+    <folder name="Menu">
+        <folder name="Window">
+            <file name="be-rk22-dbgplugin-OpenDebuggerAction.shadow">
+                <attr name="originalFile"
+                      stringvalue="Actions/Window/be-rk22-dbgplugin-OpenDebuggerAction.instance"/>
+                <attr name="position" intvalue="9999"/>
+            </file>
+        </folder>
+    </folder>
+
+    <!-- ── DB Browser context menu actions ────────────────────────────────── -->
+    <folder name="Databases">
+        <folder name="Explorer">
+            <folder name="Procedure">
+                <folder name="Actions">
+                    <file name="be-rk22-dbgplugin-DeployAction.shadow">
+                        <attr name="originalFile"
+                              stringvalue="Actions/Database/be-rk22-dbgplugin-DeployAction.instance"/>
+                        <attr name="position" intvalue="150"/>
+                    </file>
+                </folder>
+            </folder>
+            <folder name="Function">
+                <folder name="Actions">
+                    <file name="be-rk22-dbgplugin-DeployAction.shadow">
+                        <attr name="originalFile"
+                              stringvalue="Actions/Database/be-rk22-dbgplugin-DeployAction.instance"/>
+                        <attr name="position" intvalue="150"/>
+                    </file>
+                </folder>
+            </folder>
+        </folder>
+    </folder>
+
+</filesystem>

@@ -1,0 +1,20 @@
+# Maven build output
+target/
+release/
+
+# Maven settings contain local credentials — never commit
+maven-settings.xml
+
+# IDE files
+.idea/
+*.iml
+.settings/
+.classpath
+.project
+.factorypath
+nbproject/private/
+nb-configuration.xml
+
+# OS
+.DS_Store
+Thumbs.db
