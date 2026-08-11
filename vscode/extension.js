@@ -96,11 +96,11 @@ class Bridge {
 
   start() {
     if (this.process) return;
-    const jar = this.context.asAbsolutePath(path.join('target', 'proc-debugger-vscode-server.jar'));
+    const jar = this.context.asAbsolutePath(path.join('target', 'mysql-routine-debugger-vscode-server.jar'));
     if (!fs.existsSync(jar)) {
       throw new Error('The debugger server is missing. Run "mvn package" at the repository root before launching the extension.');
     }
-    const configuredJava = vscode.workspace.getConfiguration('mariaDbDebugger').get('javaPath', 'java');
+    const configuredJava = vscode.workspace.getConfiguration('mysqlRoutineDebugger').get('javaPath', 'java');
     const javaPath = discoverJava(configuredJava);
     this.output.appendLine(`Using Java ${javaMajor(javaPath)}: ${javaPath}`);
     this.stderr = '';
@@ -119,7 +119,7 @@ class Bridge {
       if (!expected) {
         let detail = this.stderr.trim();
         if (detail.includes('UnsupportedClassVersionError')) {
-          detail = 'Java 17 or newer is required. Set mariaDbDebugger.javaPath to a Java 17+ executable in VS Code Settings.';
+          detail = 'Java 17 or newer is required. Set mysqlRoutineDebugger.javaPath to a Java 17+ executable in VS Code Settings.';
         }
         this.failAll(new Error(detail || `Debugger server exited with code ${code}.`));
       }
@@ -184,7 +184,7 @@ function routineItem(routine) {
   const item = new vscode.TreeItem(routine.name, vscode.TreeItemCollapsibleState.None);
   item.description = routine.type.toLowerCase();
   item.iconPath = new vscode.ThemeIcon(routine.type === 'FUNCTION' ? 'symbol-function' : 'symbol-method');
-  item.command = { command: 'mariaDbDebugger.load', title: 'Open Routine', arguments: [routine] };
+  item.command = { command: 'mysqlRoutineDebugger.load', title: 'Open Routine', arguments: [routine] };
   return item;
 }
 
@@ -196,7 +196,7 @@ function isExecutable(text) {
 }
 
 function activate(context) {
-  const output = vscode.window.createOutputChannel('MariaDB Procedure Debugger');
+  const output = vscode.window.createOutputChannel('MySQL Routine Debugger');
   const bridge = new Bridge(context, output);
   const state = {
     routines: [], watches: new Map(), log: [], breakpoints: new Set(), lastId: 0,
@@ -205,14 +205,14 @@ function activate(context) {
   };
   const routines = new ListProvider(() => state.routines, routineItem);
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
-  status.name = 'MariaDB Procedure Debugger';
-  status.command = 'mariaDbDebugger.open';
-  status.text = '$(debug-disconnect) MariaDB Debugger';
-  status.tooltip = 'Open MariaDB Procedure Debugger';
+  status.name = 'MySQL Routine Debugger';
+  status.command = 'mysqlRoutineDebugger.open';
+  status.text = '$(debug-disconnect) MySQL Routine Debugger';
+  status.tooltip = 'Open MySQL Routine Debugger';
   status.show();
   let panel;
 
-  const setContext = (key, value) => vscode.commands.executeCommand('setContext', `mariaDbDebugger.${key}`, value);
+  const setContext = (key, value) => vscode.commands.executeCommand('setContext', `mysqlRoutineDebugger.${key}`, value);
   const snapshot = () => ({
     routines: state.routines,
     routine: state.routine,
@@ -241,7 +241,7 @@ function activate(context) {
   };
   const showError = error => {
     output.appendLine(error.stack || String(error));
-    vscode.window.showErrorMessage(`MariaDB Debugger: ${error.message || error}`);
+    vscode.window.showErrorMessage(`MySQL Routine Debugger: ${error.message || error}`);
     if (panel) panel.webview.postMessage({ type: 'error', message: error.message || String(error) });
   };
   const stopPolling = () => {
@@ -298,36 +298,38 @@ function activate(context) {
   };
   const startPolling = () => {
     stopPolling();
-    const interval = vscode.workspace.getConfiguration('mariaDbDebugger').get('pollInterval', 600);
+    const interval = vscode.workspace.getConfiguration('mysqlRoutineDebugger').get('pollInterval', 600);
     state.pollTimer = setInterval(poll, interval);
     poll();
   };
 
   async function connect(connection) {
     openPanel();
-    const config = vscode.workspace.getConfiguration('mariaDbDebugger');
+    const config = vscode.workspace.getConfiguration('mysqlRoutineDebugger');
     if (!connection) {
       const defaults = {
-        host: config.get('host', 'localhost'), port: config.get('port', 3306),
+        engine: config.get('engine', 'mysql'), host: config.get('host', 'localhost'), port: config.get('port', 3306),
         user: config.get('user', ''), database: config.get('database', '')
       };
       panel.webview.postMessage({ type: 'showConnection', connection: defaults });
       return;
     }
     const { host, user, database } = connection;
+    const engine = connection.engine || 'mysql';
     const portText = String(connection.port || 3306);
-    const secretKey = `mariaDbDebugger:${host}:${portText}:${database}:${user}`;
+    const secretKey = `mysqlRoutineDebugger:${engine}:${host}:${portText}:${database}:${user}`;
     const password = connection.password || await context.secrets.get(secretKey) || '';
     setStatus('Connecting…');
-    const result = await bridge.request('connect', { host, port: Number(portText), user, password, database });
+    const result = await bridge.request('connect', { engine, host, port: Number(portText), user, password, database });
     await context.secrets.store(secretKey, password);
     await Promise.all([
+      config.update('engine', engine, vscode.ConfigurationTarget.Global),
       config.update('host', host, vscode.ConfigurationTarget.Global),
       config.update('port', Number(portText), vscode.ConfigurationTarget.Global),
       config.update('user', user, vscode.ConfigurationTarget.Global),
       config.update('database', database, vscode.ConfigurationTarget.Global)
     ]);
-    state.routines = result.routines || []; state.connected = true; state.schema = result.schema;
+    state.routines = result.routines || []; state.connected = true; state.schema = result.schema; state.engine = result.engine;
     routines.refresh(); await setContext('connected', true); setStatus(`Connected to ${result.schema}`);
     panel.webview.postMessage({ type: 'connected' });
   }
@@ -402,7 +404,7 @@ function activate(context) {
     const nonce = Math.random().toString(36).slice(2);
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
       <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
-      <link rel="stylesheet" href="${style}"><title>MariaDB Procedure Debugger</title></head>
+      <link rel="stylesheet" href="${style}"><title>MySQL Routine Debugger</title></head>
       <body>
         <header class="toolbar">
           <button id="connect" class="secondary">Connect</button><span class="separator"></span>
@@ -425,8 +427,9 @@ function activate(context) {
           </aside>
         </main>
         <footer id="status" class="status">Ready</footer>
-        <dialog id="connection-dialog"><form id="connection-form" method="dialog"><h2>Connect to MariaDB</h2>
-          <div class="connection-grid"><label>Host<input id="db-host" required></label><label>Port<input id="db-port" type="number" required></label>
+        <dialog id="connection-dialog"><form id="connection-form" method="dialog"><h2>Connect to MySQL or MariaDB</h2>
+          <div class="connection-grid"><label class="full">Database engine<select id="db-engine"><option value="mysql">MySQL</option><option value="mariadb">MariaDB</option></select></label>
+          <label>Host<input id="db-host" required></label><label>Port<input id="db-port" type="number" required></label>
           <label>User<input id="db-user" required></label><label>Password<input id="db-password" type="password" placeholder="Use saved password"></label>
           <label class="full">Database / schema<input id="db-database" required></label></div>
           <div id="connection-error" class="form-error"></div><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button><button id="connect-submit" value="default" class="primary">Connect</button></div>
@@ -438,7 +441,7 @@ function activate(context) {
 
   function openPanel() {
     if (panel) { panel.reveal(vscode.ViewColumn.One); render(); return panel; }
-    panel = vscode.window.createWebviewPanel('mariaDbDebugger.panel', 'MariaDB Procedure Debugger', vscode.ViewColumn.One, {
+    panel = vscode.window.createWebviewPanel('mysqlRoutineDebugger.panel', 'MySQL Routine Debugger', vscode.ViewColumn.One, {
       enableScripts: true, retainContextWhenHidden: true,
       localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'resources')]
     });
@@ -451,9 +454,9 @@ function activate(context) {
           case 'ready':
             render();
             if (!state.connected) {
-              const config = vscode.workspace.getConfiguration('mariaDbDebugger');
+              const config = vscode.workspace.getConfiguration('mysqlRoutineDebugger');
               panel.webview.postMessage({ type: 'showConnection', connection: {
-                host: config.get('host', 'localhost'), port: config.get('port', 3306),
+                engine: config.get('engine', 'mysql'), host: config.get('host', 'localhost'), port: config.get('port', 3306),
                 user: config.get('user', ''), database: config.get('database', '')
               }});
             }
@@ -472,14 +475,14 @@ function activate(context) {
           case 'clearLog':
             if (state.sessionId) await bridge.request('clearLog', { sessionId: state.sessionId });
             state.log = []; state.lastId = 0; render(); break;
-          case 'reset': await vscode.commands.executeCommand('mariaDbDebugger.reset'); break;
+          case 'reset': await vscode.commands.executeCommand('mysqlRoutineDebugger.reset'); break;
         }
       } catch (error) { showError(error); }
     }, null, context.subscriptions);
     return panel;
   }
 
-  const command = (name, handler) => context.subscriptions.push(vscode.commands.registerCommand(`mariaDbDebugger.${name}`, (...args) => Promise.resolve(handler(...args)).catch(showError)));
+  const command = (name, handler) => context.subscriptions.push(vscode.commands.registerCommand(`mysqlRoutineDebugger.${name}`, (...args) => Promise.resolve(handler(...args)).catch(showError)));
   command('open', openPanel);
   command('connect', connect);
   command('disconnect', async () => { stopPolling(); await bridge.request('disconnect'); state.connected = false; state.routines = []; routines.refresh(); await setContext('connected', false); setStatus('Ready'); });
@@ -505,7 +508,7 @@ function activate(context) {
 
   context.subscriptions.push(
     output, bridge, routines, status,
-    vscode.window.registerTreeDataProvider('mariaDbDebugger.routines', routines)
+    vscode.window.registerTreeDataProvider('mysqlRoutineDebugger.routines', routines)
   );
   setContext('connected', false); setContext('loaded', false); setContext('active', false); setContext('paused', false);
 }

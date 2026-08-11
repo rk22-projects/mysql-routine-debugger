@@ -5,14 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>be.rk22</groupId>
-        <artifactId>proc-debugger-nb-parent</artifactId>
+        <groupId>com.rk22</groupId>
+        <artifactId>mysql-routine-debugger-parent</artifactId>
         <version>0.1.0-alpha.1</version>
     </parent>
 
-    <artifactId>proc-debugger-nb</artifactId>
+    <artifactId>mysql-routine-debugger-netbeans</artifactId>
     <packaging>nbm</packaging>
-    <name>MariaDB Procedure Debugger - Plugin</name>
+    <name>MySQL Routine Debugger - Plugin</name>
 
     <build>
         <plugins>
@@ -23,7 +23,7 @@
                 <extensions>true</extensions>
                 <configuration>
                     <cluster>extra</cluster>
-                    <moduleName>be.rk22.dbgplugin</moduleName>
+                    <moduleName>com.rk22.dbgplugin</moduleName>
                     <requiresRestart>false</requiresRestart>
                 </configuration>
             </plugin>
@@ -37,7 +37,7 @@
                     </archive>
                 </configuration>
             </plugin>
-            <!-- Unpack core classes into the plugin JAR so all be.rk22.dbgplugin.* classes
+            <!-- Unpack core classes into the plugin JAR so all com.rk22.dbgplugin.* classes
                  live in a single JAR — NB's module classloader resolves packages against one JAR
                  and cannot find classes in the same package spread across ext/ JARs. -->
             <plugin>
@@ -52,8 +52,8 @@
                         <configuration>
                             <artifactItems>
                                 <artifactItem>
-                                    <groupId>be.rk22</groupId>
-                                    <artifactId>proc-debugger-nb-core</artifactId>
+                                    <groupId>com.rk22</groupId>
+                                    <artifactId>mysql-routine-debugger-core</artifactId>
                                     <version>${project.version}</version>
                                     <outputDirectory>${project.build.outputDirectory}</outputDirectory>
                                     <excludes>META-INF/**</excludes>
@@ -70,8 +70,8 @@
         <!-- Core module: provided so nbm-maven-plugin doesn't bundle it in ext/;
              classes are merged into the plugin JAR by the unpack-core execution above. -->
         <dependency>
-            <groupId>be.rk22</groupId>
-            <artifactId>proc-debugger-nb-core</artifactId>
+            <groupId>com.rk22</groupId>
+            <artifactId>mysql-routine-debugger-core</artifactId>
             <version>${project.version}</version>
             <scope>provided</scope>
         </dependency>
@@ -116,17 +116,22 @@
             <artifactId>org-openide-dialogs</artifactId>
             <version>${nb.version}</version>
         </dependency>
-        <!-- DB Explorer integration — installed locally by the NetBeans install script. -->
+        <!-- DB Explorer integration. -->
         <dependency>
             <groupId>org.netbeans.modules</groupId>
             <artifactId>org-netbeans-modules-db</artifactId>
             <version>${nb.version}</version>
         </dependency>
-        <!-- MariaDB/MySQL JDBC driver -->
+        <!-- JDBC drivers packaged with the NetBeans module. -->
         <dependency>
             <groupId>org.mariadb.jdbc</groupId>
             <artifactId>mariadb-java-client</artifactId>
-            <version>3.5.3</version>
+            <version>${mariadb.connector.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>${mysql.connector.version}</version>
         </dependency>
         <!-- Test -->
         <dependency>

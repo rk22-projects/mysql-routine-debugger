@@ -1,26 +1,21 @@
-# MariaDB Procedure Debugger for VS Code
+# MySQL Routine Debugger for Visual Studio Code
 
-This module is a native VS Code frontend for the debugger in this repository. It uses the same Java `core` module as the NetBeans and standalone frontends, through a small bundled JSON-lines server.
+The Visual Studio Code frontend supports MySQL and MariaDB stored procedures and functions.
 
-## Build and run
+## Requirements
 
-Requirements: Java 17+, Maven, VS Code 1.96+, and Node.js when packaging a VSIX. The extension automatically discovers Java 17+ from `JAVA_HOME`, PATH, standard OS installation locations, and common IDE-bundled JDKs; users do not normally need to configure a Java path.
+- Visual Studio Code 1.96 or newer
+- Java 17 or newer
+- A reachable MySQL or MariaDB server
+- A database account with permission to inspect and modify routines in the selected schema
 
-1. From the repository root, run `mvn package`. This builds the shared core and the executable bridge at `vscode/target/proc-debugger-vscode-server.jar`.
-2. Open the `vscode` directory in VS Code and press F5 to launch an Extension Development Host.
-3. Open the MariaDB Debugger activity-bar view and choose **Open Debugger**.
+## Usage
 
-To create an installable extension, run `npm run package` in this directory after the Maven build. The package script downloads `@vscode/vsce` through `npx` if it is not already installed.
+1. Open the **MySQL Routine Debugger** activity-bar view.
+2. Choose **Open Debugger**.
+3. Select MySQL or MariaDB and enter the connection details.
+4. Select a routine, add breakpoints, and start debugging.
+5. Invoke the routine from another database client.
+6. Use Continue or Step when execution pauses, then stop the session when finished.
 
-## Workflow
-
-- Use the debugger panel's connection form, then select a procedure or function from its toolbar.
-- Click the source gutter or press F9 on a selected executable line to toggle a breakpoint.
-- Choose **Start Debugging**, then invoke the routine normally from any SQL client.
-- Use F5 to continue and F8 to step when the routine pauses.
-- Right-click identifiers to add them to **Watches** and hover identifiers to inspect their latest value.
-- Choose **Stop Debugging** to restore the original routine.
-
-Connection fields are regular VS Code settings. The password is stored only in VS Code secret storage.
-
-> The debugger temporarily replaces selected database routines and creates `_dbg_*` objects. Use it only against a database where you are authorized to alter routines. The **Reset All Debug Changes** command is the recovery path after an interrupted session.
+Passwords are stored in Visual Studio Code secret storage. Use **Reset All Debug Changes** to recover from an interrupted session.

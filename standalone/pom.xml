@@ -5,14 +5,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>be.rk22</groupId>
-        <artifactId>proc-debugger-nb-parent</artifactId>
+        <groupId>com.rk22</groupId>
+        <artifactId>mysql-routine-debugger-parent</artifactId>
         <version>0.1.0-alpha.1</version>
     </parent>
 
-    <artifactId>proc-debugger-nb-standalone</artifactId>
+    <artifactId>mysql-routine-debugger-standalone</artifactId>
     <packaging>jar</packaging>
-    <name>MariaDB Procedure Debugger - Standalone</name>
+    <name>MySQL Routine Debugger - Standalone</name>
 
     <properties>
         <javafx.platform>win</javafx.platform>
@@ -44,8 +44,8 @@
 
     <dependencies>
         <dependency>
-            <groupId>be.rk22</groupId>
-            <artifactId>proc-debugger-nb-core</artifactId>
+            <groupId>com.rk22</groupId>
+            <artifactId>mysql-routine-debugger-core</artifactId>
             <version>${project.version}</version>
         </dependency>
 
@@ -71,19 +71,24 @@
         <dependency>
             <groupId>org.mariadb.jdbc</groupId>
             <artifactId>mariadb-java-client</artifactId>
-            <version>3.5.3</version>
+            <version>${mariadb.connector.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>${mysql.connector.version}</version>
         </dependency>
     </dependencies>
 
     <build>
-        <finalName>proc-debugger-standalone</finalName>
+        <finalName>mysql-routine-debugger-standalone</finalName>
         <plugins>
             <plugin>
                 <groupId>org.openjfx</groupId>
                 <artifactId>javafx-maven-plugin</artifactId>
                 <version>0.0.8</version>
                 <configuration>
-                    <mainClass>be.rk22.dbgplugin.standalone.App</mainClass>
+                    <mainClass>com.rk22.dbgplugin.standalone.App</mainClass>
                 </configuration>
             </plugin>
             <plugin>
@@ -107,8 +112,9 @@
                                 </filter>
                             </filters>
                             <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>be.rk22.dbgplugin.standalone.Launcher</mainClass>
+                                    <mainClass>com.rk22.dbgplugin.standalone.Launcher</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>

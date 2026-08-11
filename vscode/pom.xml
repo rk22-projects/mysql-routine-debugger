@@ -5,19 +5,19 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>be.rk22</groupId>
-        <artifactId>proc-debugger-nb-parent</artifactId>
+        <groupId>com.rk22</groupId>
+        <artifactId>mysql-routine-debugger-parent</artifactId>
         <version>0.1.0-alpha.1</version>
     </parent>
 
-    <artifactId>proc-debugger-vscode</artifactId>
+    <artifactId>mysql-routine-debugger-vscode</artifactId>
     <packaging>jar</packaging>
-    <name>MariaDB Procedure Debugger - VS Code</name>
+    <name>MySQL Routine Debugger - VS Code</name>
 
     <dependencies>
         <dependency>
-            <groupId>be.rk22</groupId>
-            <artifactId>proc-debugger-nb-core</artifactId>
+            <groupId>com.rk22</groupId>
+            <artifactId>mysql-routine-debugger-core</artifactId>
             <version>${project.version}</version>
         </dependency>
         <dependency>
@@ -28,7 +28,7 @@
     </dependencies>
 
     <build>
-        <finalName>proc-debugger-vscode-server</finalName>
+        <finalName>mysql-routine-debugger-vscode-server</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -41,8 +41,9 @@
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>be.rk22.dbgplugin.vscode.BridgeServer</mainClass>
+                                    <mainClass>com.rk22.dbgplugin.vscode.BridgeServer</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>

@@ -134,6 +134,7 @@ window.addEventListener('message', event => {
   if (message.type === 'state') { state = message.state; render(); }
   if (message.type === 'showConnection') {
     const c = message.connection || {};
+    $('db-engine').value = c.engine || 'mysql';
     $('db-host').value = c.host || 'localhost'; $('db-port').value = c.port || 3306;
     $('db-user').value = c.user || ''; $('db-database').value = c.database || ''; $('db-password').value = '';
     $('connection-error').textContent = ''; $('connection-dialog').showModal();
@@ -161,7 +162,7 @@ $('connection-form').addEventListener('submit', event => {
   if (event.submitter?.value === 'cancel') return;
   event.preventDefault();
   $('connection-error').textContent = '';
-  post('connect', { connection: { host: $('db-host').value.trim(), port: Number($('db-port').value), user: $('db-user').value.trim(), password: $('db-password').value, database: $('db-database').value.trim() } });
+  post('connect', { connection: { engine: $('db-engine').value, host: $('db-host').value.trim(), port: Number($('db-port').value), user: $('db-user').value.trim(), password: $('db-password').value, database: $('db-database').value.trim() } });
 });
 document.addEventListener('contextmenu', event => {
   const identifier = event.target.closest('.identifier');

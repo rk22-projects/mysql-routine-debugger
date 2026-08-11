@@ -4,11 +4,11 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>be.rk22</groupId>
-    <artifactId>proc-debugger-nb-parent</artifactId>
+    <groupId>com.rk22</groupId>
+    <artifactId>mysql-routine-debugger-parent</artifactId>
     <version>0.1.0-alpha.1</version>
     <packaging>pom</packaging>
-    <name>MariaDB Procedure Debugger</name>
+    <name>MySQL Routine Debugger</name>
 
     <modules>
         <module>core</module>
@@ -19,6 +19,8 @@
 
     <properties>
         <nb.version>RELEASE270</nb.version>
+        <mariadb.connector.version>3.5.3</mariadb.connector.version>
+        <mysql.connector.version>9.3.0</mysql.connector.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>
     </properties>

@@ -5,21 +5,26 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>be.rk22</groupId>
-        <artifactId>proc-debugger-nb-parent</artifactId>
+        <groupId>com.rk22</groupId>
+        <artifactId>mysql-routine-debugger-parent</artifactId>
         <version>0.1.0-alpha.1</version>
     </parent>
 
-    <artifactId>proc-debugger-nb-core</artifactId>
+    <artifactId>mysql-routine-debugger-core</artifactId>
     <packaging>jar</packaging>
-    <name>MariaDB Procedure Debugger - Core</name>
+    <name>MySQL Routine Debugger - Core</name>
 
     <dependencies>
-        <!-- MariaDB/MySQL JDBC driver -->
+        <!-- Runtime drivers for both supported connection schemes. -->
         <dependency>
             <groupId>org.mariadb.jdbc</groupId>
             <artifactId>mariadb-java-client</artifactId>
-            <version>3.5.3</version>
+            <version>${mariadb.connector.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>${mysql.connector.version}</version>
         </dependency>
         <!-- Test -->
         <dependency>
