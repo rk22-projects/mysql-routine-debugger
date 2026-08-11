@@ -1,11 +1,11 @@
 # MySQL Routine Debugger — Standalone
 
+> [!CAUTION]
+> **Early alpha software:** this project has undergone only limited testing. Features may be incomplete, behavior may change without notice, and defects may modify routines or other database objects incorrectly. Do not use it with production databases. Use only isolated development or test environments and ensure you have current backups.
+
 This module provides a desktop MySQL and MariaDB routine debugger that runs independently of an IDE. Its JavaFX interface lets you connect to a database, browse stored procedures and functions, set breakpoints, step through execution, inspect variables and watches, and review execution logs.
 
 Use this frontend when you want the complete debugging workflow without installing a NetBeans or Visual Studio Code extension.
-
-> [!WARNING]
-> Use the debugger only on development or test databases. It temporarily replaces routines and creates supporting objects in the selected schema.
 
 ## Requirements
 
@@ -30,4 +30,3 @@ The latest-release link will become available when the first packaged release is
 ## Start debugging
 
 Connect to a development or test database, select a routine, add breakpoints, and start debugging. Invoke the instrumented routine from a separate SQL client or application connection, then use Continue, Step Into, Step Over, or Step Out when execution pauses.
-
