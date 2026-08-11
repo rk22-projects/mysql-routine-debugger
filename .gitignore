@@ -1,6 +1,7 @@
 # Maven build output
 target/
 release/
+*.vsix
 
 # Maven settings contain local credentials — never commit
 maven-settings.xml

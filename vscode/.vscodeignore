@@ -1,0 +1,11 @@
+src/**
+.vscode/**
+pom.xml
+package-lock.json
+node_modules/**
+target/original-*.jar
+target/*-shaded.jar
+target/classes/**
+target/generated-sources/**
+target/maven-archiver/**
+target/maven-status/**
