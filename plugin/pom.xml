@@ -116,11 +116,11 @@
             <artifactId>org-openide-dialogs</artifactId>
             <version>${nb.version}</version>
         </dependency>
-        <!-- DB Explorer integration — installed locally via install:install-file from the NB 27 install -->
+        <!-- DB Explorer integration — installed locally by the NetBeans install script. -->
         <dependency>
             <groupId>org.netbeans.modules</groupId>
             <artifactId>org-netbeans-modules-db</artifactId>
-            <version>RELEASE270</version>
+            <version>${nb.version}</version>
         </dependency>
         <!-- MariaDB/MySQL JDBC driver -->
         <dependency>

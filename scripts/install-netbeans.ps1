@@ -2,7 +2,8 @@
 param(
     [switch]$SkipToolInstall,
     [string]$NetBeansHome,
-    [string]$NetBeansUserDir = (Join-Path $env:APPDATA 'NetBeans\27')
+    [string]$NetBeansUserDir,
+    [ValidatePattern('^\d+(?:\.\d+)?$')][string]$NetBeansDownloadVersion = '27'
 )
 
 . "$PSScriptRoot\lib\Bootstrap.ps1"
@@ -36,28 +37,39 @@ function Get-NetBeansMajor([string]$Path) {
 
 function Test-NetBeansHome([string]$Path) {
     return $Path -and
-        (Get-NetBeansMajor $Path) -eq 27 -and
+        (Get-NetBeansMajor $Path) -gt 0 -and
         (Test-Path (Join-Path $Path 'ide\modules\org-netbeans-modules-db.jar')) -and
         (Test-Path (Join-Path $Path 'bin\netbeans64.exe'))
 }
 
 if (-not (Test-NetBeansHome $NetBeansHome)) {
-    $candidates = @(
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    @(
         $env:NETBEANS_HOME,
         (Join-Path ${env:ProgramFiles} 'Apache NetBeans'),
-        (Join-Path $repo '.tools\netbeans-27\netbeans')
-    )
+        (Join-Path $repo ".tools\netbeans-$NetBeansDownloadVersion\netbeans")
+    ) | Where-Object { $_ } | ForEach-Object { $candidates.Add($_) }
+    foreach ($root in @(${env:ProgramFiles}, (Join-Path $repo '.tools'))) {
+        if (Test-Path -LiteralPath $root) {
+            Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue |
+                Where-Object { $_.Name -like '*NetBeans*' -or $_.Name -like 'netbeans-*' } |
+                ForEach-Object {
+                    $candidates.Add($_.FullName)
+                    $candidates.Add((Join-Path $_.FullName 'netbeans'))
+                }
+        }
+    }
     $NetBeansHome = $candidates | Where-Object { Test-NetBeansHome $_ } | Select-Object -First 1
 }
 
 if (-not $NetBeansHome -and -not $SkipToolInstall) {
     $tools = Join-Path $repo '.tools'
     New-Item -ItemType Directory -Path $tools -Force | Out-Null
-    $zip = Join-Path $tools 'netbeans-27-bin.zip'
-    $installRoot = Join-Path $tools 'netbeans-27'
-    $baseUrl = 'https://archive.apache.org/dist/netbeans/netbeans/27/netbeans-27-bin.zip'
+    $zip = Join-Path $tools "netbeans-$NetBeansDownloadVersion-bin.zip"
+    $installRoot = Join-Path $tools "netbeans-$NetBeansDownloadVersion"
+    $baseUrl = "https://archive.apache.org/dist/netbeans/netbeans/$NetBeansDownloadVersion/netbeans-$NetBeansDownloadVersion-bin.zip"
 
-    Write-Host 'Downloading Apache NetBeans 27 (approximately 491 MB)...' -ForegroundColor Cyan
+    Write-Host "Downloading Apache NetBeans $NetBeansDownloadVersion..." -ForegroundColor Cyan
     Invoke-WebRequest -UseBasicParsing -Uri $baseUrl -OutFile $zip
     $checksumText = (Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl.sha512").Content.Trim()
     $expected = ($checksumText -split '\s+')[0].ToUpperInvariant()
@@ -70,21 +82,26 @@ if (-not $NetBeansHome -and -not $SkipToolInstall) {
 }
 
 if (-not (Test-NetBeansHome $NetBeansHome)) {
-    throw 'Apache NetBeans 27 was not found. Pass -NetBeansHome or rerun without -SkipToolInstall.'
+    throw 'Apache NetBeans was not found. Pass -NetBeansHome or rerun without -SkipToolInstall.'
 }
-Write-Host "Using Apache NetBeans 27: $NetBeansHome" -ForegroundColor Green
+$netBeansMajor = Get-NetBeansMajor $NetBeansHome
+$netBeansRelease = "RELEASE${netBeansMajor}0"
+if (-not $NetBeansUserDir) {
+    $NetBeansUserDir = Join-Path $env:APPDATA "NetBeans\$netBeansMajor"
+}
+Write-Host "Using Apache NetBeans ${netBeansMajor}: $NetBeansHome" -ForegroundColor Green
 
 $dbModule = Join-Path $NetBeansHome 'ide\modules\org-netbeans-modules-db.jar'
 Write-Host 'Registering the NetBeans DB Explorer API in the local Maven repository...' -ForegroundColor Cyan
 Invoke-MavenWrapper $repo @(
     '-N', 'org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file',
     "-Dfile=$dbModule", '-DgroupId=org.netbeans.modules',
-    '-DartifactId=org-netbeans-modules-db', '-Dversion=RELEASE270',
+    '-DartifactId=org-netbeans-modules-db', "-Dversion=$netBeansRelease",
     '-Dpackaging=jar', '-DgeneratePom=true'
 )
 
 Write-Host 'Building the NetBeans plugin...' -ForegroundColor Cyan
-Invoke-MavenWrapper $repo @('-pl', 'plugin', '-am', 'clean', 'package')
+Invoke-MavenWrapper $repo @("-Dnb.version=$netBeansRelease", '-pl', 'plugin', '-am', 'clean', 'package')
 $nbm = Join-Path $repo 'plugin\target\proc-debugger-nb-1.0-SNAPSHOT.nbm'
 if (-not (Test-Path $nbm)) { throw "NetBeans module was not produced: $nbm" }
 
@@ -101,4 +118,4 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 Copy-Item -Path (Join-Path $extract 'netbeans\*') -Destination $NetBeansUserDir -Recurse -Force
 
 Write-Host "Installed NetBeans plugin: $nbm" -ForegroundColor Green
-Write-Host 'Restart NetBeans 27. The debugger appears under Window > MariaDB Procedure Debugger and in the database explorer routine actions.'
+Write-Host "Restart NetBeans $netBeansMajor. The debugger appears under Window > MariaDB Procedure Debugger and in the database explorer routine actions."
