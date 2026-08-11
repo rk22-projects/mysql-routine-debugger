@@ -94,11 +94,7 @@ function Find-VSCode {
 
 function Ensure-VSCode {
     $code = Find-VSCode
-    if (-not $code -and -not $SkipToolInstall) {
-        Install-WingetPackage 'Microsoft.VisualStudioCode' 'Visual Studio Code'
-        $code = Find-VSCode
-    }
-    if (-not $code) { throw 'Visual Studio Code was not found. Install it or use -SkipExtensionInstall.' }
+    if (-not $code) { throw 'Visual Studio Code is a prerequisite and was not found. Install it locally or use -SkipExtensionInstall to build only.' }
     return $code
 }
 
@@ -111,6 +107,7 @@ function Reset-ReleaseDirectory([string]$Path) {
     New-Item -ItemType Directory -Path $Path -Force | Out-Null
 }
 
+if (-not $SkipExtensionInstall) { $code = Ensure-VSCode }
 Ensure-Java17
 Ensure-Node
 
@@ -135,7 +132,6 @@ Reset-ReleaseDirectory $release
 Copy-Item -LiteralPath $vsix -Destination $release
 
 if (-not $SkipExtensionInstall) {
-    $code = Ensure-VSCode
     Write-Host 'Installing the extension into Visual Studio Code...' -ForegroundColor Cyan
     Invoke-External $code @('--install-extension', $vsix, '--force')
 }

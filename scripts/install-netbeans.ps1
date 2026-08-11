@@ -2,8 +2,7 @@
 param(
     [switch]$SkipToolInstall,
     [string]$NetBeansHome,
-    [string]$NetBeansUserDir,
-    [ValidatePattern('^\d+(?:\.\d+)?$')][string]$NetBeansDownloadVersion = '27'
+    [string]$NetBeansUserDir
 )
 
 Set-StrictMode -Version Latest
@@ -83,8 +82,6 @@ function Reset-Directory([string]$Path) {
     New-Item -ItemType Directory -Path $Path -Force | Out-Null
 }
 
-Ensure-Java17
-
 function Get-NetBeansMajor([string]$Path) {
     if (-not $Path) { return 0 }
     $coreJar = Join-Path $Path 'platform\core\core.jar'
@@ -121,8 +118,7 @@ if (-not (Test-NetBeansHome $NetBeansHome)) {
     $candidates = [System.Collections.Generic.List[string]]::new()
     @(
         $env:NETBEANS_HOME,
-        (Join-Path ${env:ProgramFiles} 'Apache NetBeans'),
-        (Join-Path $repo ".tools\netbeans-$NetBeansDownloadVersion\netbeans")
+        (Join-Path ${env:ProgramFiles} 'Apache NetBeans')
     ) | Where-Object { $_ } | ForEach-Object { $candidates.Add($_) }
     foreach ($root in @(${env:ProgramFiles}, (Join-Path $repo '.tools'))) {
         if (Test-Path -LiteralPath $root) {
@@ -137,27 +133,8 @@ if (-not (Test-NetBeansHome $NetBeansHome)) {
     $NetBeansHome = $candidates | Where-Object { Test-NetBeansHome $_ } | Select-Object -First 1
 }
 
-if (-not $NetBeansHome -and -not $SkipToolInstall) {
-    $tools = Join-Path $repo '.tools'
-    New-Item -ItemType Directory -Path $tools -Force | Out-Null
-    $zip = Join-Path $tools "netbeans-$NetBeansDownloadVersion-bin.zip"
-    $installRoot = Join-Path $tools "netbeans-$NetBeansDownloadVersion"
-    $baseUrl = "https://archive.apache.org/dist/netbeans/netbeans/$NetBeansDownloadVersion/netbeans-$NetBeansDownloadVersion-bin.zip"
-
-    Write-Host "Downloading Apache NetBeans $NetBeansDownloadVersion..." -ForegroundColor Cyan
-    Invoke-WebRequest -UseBasicParsing -Uri $baseUrl -OutFile $zip
-    $checksumText = (Invoke-WebRequest -UseBasicParsing -Uri "$baseUrl.sha512").Content.Trim()
-    $expected = ($checksumText -split '\s+')[0].ToUpperInvariant()
-    $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA512).Hash.ToUpperInvariant()
-    if ($actual -ne $expected) { throw 'Apache NetBeans download checksum verification failed.' }
-
-    Reset-Directory $installRoot
-    Expand-Archive -LiteralPath $zip -DestinationPath $installRoot
-    $NetBeansHome = Join-Path $installRoot 'netbeans'
-}
-
 if (-not (Test-NetBeansHome $NetBeansHome)) {
-    throw 'Apache NetBeans was not found. Pass -NetBeansHome or rerun without -SkipToolInstall.'
+    throw 'Apache NetBeans is a prerequisite and was not found. Install it locally or pass -NetBeansHome.'
 }
 $netBeansMajor = Get-NetBeansMajor $NetBeansHome
 $netBeansRelease = "RELEASE${netBeansMajor}0"
@@ -165,6 +142,7 @@ if (-not $NetBeansUserDir) {
     $NetBeansUserDir = Join-Path $env:APPDATA "NetBeans\$netBeansMajor"
 }
 Write-Host "Using Apache NetBeans ${netBeansMajor}: $NetBeansHome" -ForegroundColor Green
+Ensure-Java17
 
 $dbModule = Join-Path $NetBeansHome 'ide\modules\org-netbeans-modules-db.jar'
 Write-Host 'Registering the NetBeans DB Explorer API in the local Maven repository...' -ForegroundColor Cyan

@@ -96,41 +96,8 @@ ensure_node() {
 
 ensure_code() {
     command -v code >/dev/null 2>&1 && return
-    [[ $SKIP_TOOL_INSTALL -eq 0 ]] || { echo "Visual Studio Code is required unless --skip-extension-install is used." >&2; exit 1; }
-
-    if command -v pacman >/dev/null 2>&1; then
-        install_packages code
-        return
-    fi
-
-    command -v curl >/dev/null 2>&1 || install_packages curl
-    mkdir -p "$REPO_ROOT/.tools"
-    local machine package_arch package_file package_url
-    machine="$(uname -m)"
-    case "$machine" in
-        x86_64|amd64) package_arch=x64 ;;
-        aarch64|arm64) package_arch=arm64 ;;
-        armv7l) package_arch=armhf ;;
-        *) echo "Unsupported CPU architecture for automatic VS Code installation: $machine" >&2; exit 1 ;;
-    esac
-
-    if command -v apt-get >/dev/null 2>&1; then
-        package_file="$REPO_ROOT/.tools/vscode.deb"
-        package_url="https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-$package_arch"
-        run curl -fL "$package_url" -o "$package_file"
-        as_root apt-get install -y "$package_file"
-    elif command -v dnf >/dev/null 2>&1 || command -v yum >/dev/null 2>&1 || command -v zypper >/dev/null 2>&1; then
-        package_file="$REPO_ROOT/.tools/vscode.rpm"
-        package_url="https://code.visualstudio.com/sha/download?build=stable&os=linux-rpm-$package_arch"
-        run curl -fL "$package_url" -o "$package_file"
-        if command -v dnf >/dev/null 2>&1; then as_root dnf install -y "$package_file"
-        elif command -v yum >/dev/null 2>&1; then as_root yum install -y "$package_file"
-        else as_root zypper --non-interactive install "$package_file"
-        fi
-    else
-        echo "Install Visual Studio Code manually, then rerun this script." >&2
-        exit 1
-    fi
+    echo "Visual Studio Code is a prerequisite and was not found. Install it locally or use --skip-extension-install to build only." >&2
+    exit 1
 }
 
 reset_release() {
@@ -140,6 +107,7 @@ reset_release() {
     mkdir -p "$path"
 }
 
+[[ $SKIP_EXTENSION_INSTALL -eq 1 ]] || ensure_code
 ensure_java
 ensure_node
 echo "Building the shared core and VS Code bridge..."
@@ -155,7 +123,6 @@ reset_release "$RELEASE"
 cp "$VSIX" "$RELEASE/"
 
 if [[ $SKIP_EXTENSION_INSTALL -eq 0 ]]; then
-    ensure_code
     run code --install-extension "$VSIX" --force
 fi
 

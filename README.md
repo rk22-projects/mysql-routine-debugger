@@ -13,8 +13,10 @@ All frontends provide breakpoints, stepping, watches, variable inspection, and e
 - A reachable MariaDB database
 - Internet access during the first build
 - Git, unless you download the source as a ZIP
+- Apache NetBeans already installed when installing the NetBeans frontend
+- Visual Studio Code already installed when installing the VS Code frontend
 
-The installers obtain the other required tools where possible. Maven does not need to be installed separately because the repository contains the [Apache Maven Wrapper](https://maven.apache.org/wrapper/).
+The installers obtain supporting build tools such as Java and Node.js where possible. They never install NetBeans or Visual Studio Code. Maven does not need to be installed separately because the repository contains the [Apache Maven Wrapper](https://maven.apache.org/wrapper/).
 
 ## Get the source code
 
@@ -45,13 +47,7 @@ The `.cmd` file is the convenient entry point. Each one invokes a self-contained
 scripts\install-netbeans.cmd
 ```
 
-The installer finds an existing Apache NetBeans installation and builds for the detected version. Earlier and later releases are accepted, but versions not previously tested by the project should be verified before wider use.
-
-If NetBeans is absent, version 27 is downloaded by default. Choose another downloadable release with:
-
-```bat
-scripts\install-netbeans.cmd -NetBeansDownloadVersion 28
-```
+The installer requires an existing Apache NetBeans installation and builds for the detected version. If NetBeans cannot be found, it stops without installing the frontend. Earlier and later releases are accepted, but versions not previously tested by the project should be verified before wider use.
 
 For a custom installation or user profile:
 
@@ -84,6 +80,8 @@ scripts\install-vscode.cmd
 
 The installer builds and installs the extension. Reload VS Code, select the MariaDB Debugger icon in the activity bar, and choose **Open Debugger**.
 
+Visual Studio Code must already be installed. If it cannot be found, the installer stops before building or installing the extension.
+
 To build a `.vsix` without installing it:
 
 ```bat
@@ -114,10 +112,9 @@ Using `bash` explicitly works even when executable file permissions were lost wh
 bash scripts/install-netbeans.sh
 ```
 
-The installer uses an existing NetBeans installation from common locations or downloads version 27 by default. Options use Linux-style names:
+The installer requires an existing NetBeans installation in a common location. If it cannot find one, it stops without installing the frontend. Use `--netbeans-home` for a custom installation:
 
 ```bash
-bash scripts/install-netbeans.sh --netbeans-download-version 28
 bash scripts/install-netbeans.sh --netbeans-home /opt/netbeans
 bash scripts/install-netbeans.sh --netbeans-home /opt/netbeans --netbeans-user-dir "$HOME/.netbeans/28"
 ```
@@ -142,7 +139,7 @@ The Linux build automatically includes the Linux JavaFX libraries. Start it with
 bash scripts/install-vscode.sh
 ```
 
-The installer builds the extension and installs it into VS Code. If VS Code is missing, the installer uses the distribution package manager or an official Microsoft `.deb`/`.rpm` package where appropriate.
+Visual Studio Code must already be installed. The installer stops before building if it cannot find the `code` command. It does not install VS Code or configure a vendor package repository.
 
 To produce the `.vsix` without installing it:
 
