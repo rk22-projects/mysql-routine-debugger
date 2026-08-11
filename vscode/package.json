@@ -2,7 +2,7 @@
   "name": "mariadb-procedure-debugger",
   "displayName": "MariaDB Procedure Debugger",
   "description": "Debug MariaDB stored procedures and functions with breakpoints, stepping, watches, and execution logs.",
-  "version": "1.0.1",
+  "version": "1.1.1",
   "publisher": "rk22",
   "license": "UNLICENSED",
   "engines": {
@@ -12,6 +12,7 @@
   "keywords": ["mariadb", "mysql", "stored procedure", "debugger"],
   "activationEvents": [
     "onView:mariaDbDebugger.routines",
+    "onCommand:mariaDbDebugger.open",
     "onCommand:mariaDbDebugger.connect"
   ],
   "main": "./extension.js",
@@ -21,6 +22,7 @@
   },
   "contributes": {
     "commands": [
+      { "command": "mariaDbDebugger.open", "title": "MariaDB Debugger: Open Debugger", "icon": "$(debug-console)" },
       { "command": "mariaDbDebugger.connect", "title": "MariaDB Debugger: Connect", "icon": "$(plug)" },
       { "command": "mariaDbDebugger.disconnect", "title": "MariaDB Debugger: Disconnect" },
       { "command": "mariaDbDebugger.refresh", "title": "MariaDB Debugger: Refresh Routines", "icon": "$(refresh)" },
@@ -44,22 +46,19 @@
     },
     "views": {
       "mariaDbDebugger": [
-        { "id": "mariaDbDebugger.routines", "name": "Routines" },
-        { "id": "mariaDbDebugger.watches", "name": "Watches" },
-        { "id": "mariaDbDebugger.log", "name": "Debug Log" }
+        { "id": "mariaDbDebugger.routines", "name": "Routines" }
       ]
     },
+    "viewsWelcome": [
+      { "view": "mariaDbDebugger.routines", "contents": "Open the unified debugger to connect, inspect source, and control execution.\n[Open Debugger](command:mariaDbDebugger.open)" }
+    ],
     "menus": {
       "view/title": [
+        { "command": "mariaDbDebugger.open", "when": "view == mariaDbDebugger.routines", "group": "navigation@1" },
         { "command": "mariaDbDebugger.connect", "when": "view == mariaDbDebugger.routines && !mariaDbDebugger.connected", "group": "navigation" },
         { "command": "mariaDbDebugger.refresh", "when": "view == mariaDbDebugger.routines && mariaDbDebugger.connected", "group": "navigation" },
         { "command": "mariaDbDebugger.deploy", "when": "view == mariaDbDebugger.routines && mariaDbDebugger.loaded && !mariaDbDebugger.active", "group": "navigation" },
-        { "command": "mariaDbDebugger.stop", "when": "view == mariaDbDebugger.routines && mariaDbDebugger.active", "group": "navigation" },
-        { "command": "mariaDbDebugger.addWatch", "when": "view == mariaDbDebugger.watches", "group": "navigation" },
-        { "command": "mariaDbDebugger.clearLog", "when": "view == mariaDbDebugger.log", "group": "navigation" }
-      ],
-      "view/item/context": [
-        { "command": "mariaDbDebugger.removeWatch", "when": "view == mariaDbDebugger.watches && viewItem == watch", "group": "inline" }
+        { "command": "mariaDbDebugger.stop", "when": "view == mariaDbDebugger.routines && mariaDbDebugger.active", "group": "navigation" }
       ],
       "commandPalette": [
         { "command": "mariaDbDebugger.continue", "when": "mariaDbDebugger.paused" },
@@ -69,7 +68,7 @@
     "keybindings": [
       { "command": "mariaDbDebugger.continue", "key": "f5", "when": "mariaDbDebugger.paused" },
       { "command": "mariaDbDebugger.step", "key": "f8", "when": "mariaDbDebugger.paused" },
-      { "command": "mariaDbDebugger.toggleBreakpoint", "key": "f9", "when": "editorTextFocus && resourceScheme == mariadb-debug" }
+      { "command": "mariaDbDebugger.toggleBreakpoint", "key": "f9", "when": "activeWebviewPanelId == mariaDbDebugger.panel" }
     ],
     "configuration": {
       "title": "MariaDB Procedure Debugger",

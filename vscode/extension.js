@@ -167,17 +167,6 @@ class Bridge {
   }
 }
 
-class SourceProvider {
-  constructor(state) {
-    this.state = state;
-    this.emitter = new vscode.EventEmitter();
-    this.onDidChange = this.emitter.event;
-  }
-  provideTextDocumentContent() { return this.state.ddl || ''; }
-  refresh() { if (this.state.sourceUri) this.emitter.fire(this.state.sourceUri); }
-  dispose() { this.emitter.dispose(); }
-}
-
 class ListProvider {
   constructor(items, makeItem) {
     this.items = items;
@@ -199,25 +188,6 @@ function routineItem(routine) {
   return item;
 }
 
-function watchItem(watch) {
-  const item = new vscode.TreeItem(watch.name, vscode.TreeItemCollapsibleState.None);
-  item.description = watch.value === undefined ? 'not observed' : String(watch.value);
-  item.tooltip = `${watch.name} = ${item.description}`;
-  item.contextValue = 'watch';
-  item.iconPath = new vscode.ThemeIcon(watch.changed ? 'arrow-swap' : 'eye');
-  return item;
-}
-
-function logItem(entry) {
-  const breakpoint = entry.varName === '__BREAKPOINT__';
-  const label = breakpoint ? `Paused at ${entry.varValue}` : `${entry.varName} = ${entry.varValue ?? 'NULL'}`;
-  const item = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-  item.description = `${entry.routineName} · ${entry.label}`;
-  item.tooltip = `${entry.ts}\n${entry.routineName} · ${entry.label}\n${label}`;
-  item.iconPath = new vscode.ThemeIcon(breakpoint ? 'debug-breakpoint' : 'output');
-  return item;
-}
-
 function isExecutable(text) {
   const value = text.trim().toUpperCase();
   if (!value || value.startsWith('--') || value.startsWith('#') || value.startsWith('/*') || value.startsWith('*/')) return false;
@@ -230,50 +200,49 @@ function activate(context) {
   const bridge = new Bridge(context, output);
   const state = {
     routines: [], watches: new Map(), log: [], breakpoints: new Set(), lastId: 0,
-    connected: false, active: false, paused: false, polling: false
+    connected: false, active: false, paused: false, polling: false, watchAll: false,
+    currentLine: -1, statusText: 'Ready', statusKind: 'normal', controlEpoch: 0
   };
-  const source = new SourceProvider(state);
   const routines = new ListProvider(() => state.routines, routineItem);
-  const watches = new ListProvider(() => [...state.watches.entries()].map(([name, value]) => ({ name, ...value })), watchItem);
-  const log = new ListProvider(() => [...state.log].reverse(), logItem);
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.name = 'MariaDB Procedure Debugger';
-  status.command = 'mariaDbDebugger.connect';
+  status.command = 'mariaDbDebugger.open';
   status.text = '$(debug-disconnect) MariaDB Debugger';
-  status.tooltip = 'Connect to MariaDB';
+  status.tooltip = 'Open MariaDB Procedure Debugger';
   status.show();
-  const currentLineDecoration = vscode.window.createTextEditorDecorationType({
-    isWholeLine: true,
-    backgroundColor: new vscode.ThemeColor('editor.stackFrameHighlightBackground'),
-    overviewRulerColor: new vscode.ThemeColor('editorOverviewRuler.findMatchForeground'),
-    overviewRulerLane: vscode.OverviewRulerLane.Full
-  });
-  const breakpointDecoration = vscode.window.createTextEditorDecorationType({
-    isWholeLine: true,
-    before: { contentText: '●', color: new vscode.ThemeColor('debugIcon.breakpointForeground'), margin: '0 8px 0 0' }
-  });
+  let panel;
 
   const setContext = (key, value) => vscode.commands.executeCommand('setContext', `mariaDbDebugger.${key}`, value);
-  const setStatus = (text, paused = false) => {
-    status.text = `${paused ? '$(debug-pause)' : '$(database)'} ${text}`;
-    status.backgroundColor = paused ? new vscode.ThemeColor('statusBarItem.errorBackground') : undefined;
+  const snapshot = () => ({
+    routines: state.routines,
+    routine: state.routine,
+    ddl: state.ddl || '',
+    breakpoints: [...state.breakpoints],
+    watches: [...state.watches.entries()].map(([name, value]) => ({ name, ...value })),
+    log: state.log.slice(-1000),
+    connected: state.connected,
+    active: state.active,
+    paused: state.paused,
+    watchAll: state.watchAll,
+    currentLine: state.currentLine,
+    statusText: state.statusText,
+    statusKind: state.statusKind,
+    schema: state.schema
+  });
+  const render = () => {
+    if (panel) panel.webview.postMessage({ type: 'state', state: snapshot() });
+  };
+  const setStatus = (text, kind = 'normal') => {
+    state.statusText = text;
+    state.statusKind = kind;
+    status.text = `${kind === 'paused' ? '$(debug-pause)' : '$(database)'} ${text}`;
+    status.backgroundColor = kind === 'paused' ? new vscode.ThemeColor('statusBarItem.errorBackground') : undefined;
+    render();
   };
   const showError = error => {
     output.appendLine(error.stack || String(error));
     vscode.window.showErrorMessage(`MariaDB Debugger: ${error.message || error}`);
-  };
-  const editor = () => vscode.window.visibleTextEditors.find(e => state.sourceUri && e.document.uri.toString() === state.sourceUri.toString());
-  const refreshDecorations = currentLine => {
-    const activeEditor = editor();
-    if (!activeEditor) return;
-    const bpRanges = [...state.breakpoints]
-      .map(label => Number(label.slice(1)) - 1)
-      .filter(line => line >= 0 && line < activeEditor.document.lineCount)
-      .map(line => activeEditor.document.lineAt(line).range);
-    activeEditor.setDecorations(breakpointDecoration, bpRanges);
-    activeEditor.setDecorations(currentLineDecoration, currentLine > 0 && currentLine <= activeEditor.document.lineCount
-      ? [activeEditor.document.lineAt(currentLine - 1).range] : []);
-    if (currentLine > 0) activeEditor.revealRange(activeEditor.document.lineAt(currentLine - 1).range, vscode.TextEditorRevealType.InCenterIfOutsideViewport);
+    if (panel) panel.webview.postMessage({ type: 'error', message: error.message || String(error) });
   };
   const stopPolling = () => {
     if (state.pollTimer) clearInterval(state.pollTimer);
@@ -281,30 +250,47 @@ function activate(context) {
     state.polling = false;
   };
   const applyEntries = entries => {
+    if (!entries.length) return false;
     for (const entry of entries) {
       state.log.push(entry);
       if (entry.varName !== '__BREAKPOINT__') {
         const watched = state.watches.get(entry.varName);
-        if (watched) state.watches.set(entry.varName, { value: entry.varValue, changed: watched.value !== undefined && watched.value !== entry.varValue });
+        if (watched || state.watchAll) {
+          const previous = watched && watched.value;
+          state.watches.set(entry.varName, {
+            value: entry.varValue,
+            changed: previous !== undefined && previous !== entry.varValue
+          });
+        }
       }
       state.lastId = Math.max(state.lastId, entry.id);
     }
     if (state.log.length > 1000) state.log.splice(0, state.log.length - 1000);
-    watches.refresh(); log.refresh();
+    render();
+    return true;
   };
   const poll = async () => {
     if (!state.active || state.polling) return;
     state.polling = true;
+    const epoch = state.controlEpoch;
     try {
       const result = await bridge.request('poll', { sessionId: state.sessionId, sinceId: state.lastId });
+      if (epoch !== state.controlEpoch) return;
       applyEntries(result.entries || []);
-      if (result.paused && !state.paused) {
-        state.paused = true; await setContext('paused', true);
-        const line = result.pausedLine || (/^L\d+$/.test(result.pausedAt || '') ? Number(result.pausedAt.slice(1)) : -1);
-        refreshDecorations(line);
-        setStatus(`Paused at ${state.routine.name}:${line > 0 ? line : result.pausedAt}`, true);
+      if (result.paused) {
+        let line = result.pausedLine || (/^L\d+$/.test(result.pausedAt || '') ? Number(result.pausedAt.slice(1)) : -1);
+        // Clearing the log removes the persisted breakpoint marker but must not
+        // erase the current source location while the DB session remains paused.
+        if (line < 1 && state.paused && state.currentLine > 0) line = state.currentLine;
+        const changedPause = !state.paused || state.currentLine !== line;
+        state.paused = true;
+        state.currentLine = line;
+        if (changedPause) {
+          await setContext('paused', true);
+          setStatus(`Paused at ${state.routine.name}:${line > 0 ? line : result.pausedAt}`, 'paused');
+        }
       } else if (!result.paused && state.paused) {
-        state.paused = false; await setContext('paused', false); refreshDecorations(-1);
+        state.paused = false; state.currentLine = -1; await setContext('paused', false);
         setStatus(`Debugging ${state.routine.name}`);
       }
     } catch (error) { output.appendLine(`Poll failed: ${error.message}`); }
@@ -317,15 +303,21 @@ function activate(context) {
     poll();
   };
 
-  async function connect() {
+  async function connect(connection) {
+    openPanel();
     const config = vscode.workspace.getConfiguration('mariaDbDebugger');
-    const ask = async (title, value, password = false) => vscode.window.showInputBox({ title, value, password, ignoreFocusOut: true });
-    const host = await ask('MariaDB host', config.get('host', 'localhost')); if (host === undefined) return;
-    const portText = await ask('MariaDB port', String(config.get('port', 3306))); if (portText === undefined) return;
-    const user = await ask('MariaDB user', config.get('user', '')); if (user === undefined) return;
-    const database = await ask('MariaDB database/schema', config.get('database', '')); if (database === undefined) return;
+    if (!connection) {
+      const defaults = {
+        host: config.get('host', 'localhost'), port: config.get('port', 3306),
+        user: config.get('user', ''), database: config.get('database', '')
+      };
+      panel.webview.postMessage({ type: 'showConnection', connection: defaults });
+      return;
+    }
+    const { host, user, database } = connection;
+    const portText = String(connection.port || 3306);
     const secretKey = `mariaDbDebugger:${host}:${portText}:${database}:${user}`;
-    const password = await ask('MariaDB password', await context.secrets.get(secretKey) || '', true); if (password === undefined) return;
+    const password = connection.password || await context.secrets.get(secretKey) || '';
     setStatus('Connecting…');
     const result = await bridge.request('connect', { host, port: Number(portText), user, password, database });
     await context.secrets.store(secretKey, password);
@@ -335,11 +327,13 @@ function activate(context) {
       config.update('user', user, vscode.ConfigurationTarget.Global),
       config.update('database', database, vscode.ConfigurationTarget.Global)
     ]);
-    state.routines = result.routines || []; state.connected = true;
+    state.routines = result.routines || []; state.connected = true; state.schema = result.schema;
     routines.refresh(); await setContext('connected', true); setStatus(`Connected to ${result.schema}`);
+    panel.webview.postMessage({ type: 'connected' });
   }
 
   async function loadRoutine(routine) {
+    openPanel();
     if (!routine) {
       routine = await vscode.window.showQuickPick(state.routines.map(r => ({ label: r.name, description: r.type, routine: r })), { placeHolder: 'Choose a routine' });
       routine = routine && routine.routine;
@@ -348,22 +342,19 @@ function activate(context) {
     const result = await bridge.request('load', routine);
     state.routine = routine; state.ddl = result.ddl; state.breakpoints = new Set(result.breakpoints || []);
     state.active = result.deployed; state.sessionId = result.sessionId; state.lastId = 0; state.paused = false;
-    state.sourceUri = vscode.Uri.parse(`mariadb-debug:/${encodeURIComponent(routine.name)}.sql`);
-    source.refresh();
-    const document = await vscode.workspace.openTextDocument(state.sourceUri);
-    await vscode.window.showTextDocument(document, { preview: false });
+    state.currentLine = -1; state.log = []; state.watches.clear();
     await setContext('loaded', true); await setContext('active', state.active); await setContext('paused', false);
-    refreshDecorations(-1);
     if (state.active) { startPolling(); setStatus(`Debugging ${routine.name}`); }
     else { stopPolling(); setStatus(`Loaded ${routine.name}`); }
+    render();
   }
 
   async function deploy() {
     if (!state.routine) return;
     setStatus(`Deploying ${state.routine.name}…`);
     const result = await bridge.request('deploy', state.routine);
-    state.sessionId = result.sessionId; state.active = true; state.lastId = 0; state.log = [];
-    log.refresh(); await setContext('active', true); startPolling();
+    state.sessionId = result.sessionId; state.active = true; state.lastId = 0; state.log = []; state.currentLine = -1;
+    await setContext('active', true); startPolling();
     setStatus(`Debug active — call ${state.routine.name}(…) in your SQL client`);
   }
 
@@ -371,50 +362,150 @@ function activate(context) {
     if (!state.active) return;
     setStatus(`Stopping ${state.routine.name}…`);
     const result = await bridge.request('stop', state.routine);
-    stopPolling(); state.active = false; state.paused = false; state.ddl = result.ddl;
-    source.refresh(); await setContext('active', false); await setContext('paused', false);
-    refreshDecorations(-1); setStatus(`Stopped debugging ${state.routine.name}`);
+    stopPolling(); state.active = false; state.paused = false; state.ddl = result.ddl; state.currentLine = -1;
+    await setContext('active', false); await setContext('paused', false);
+    setStatus(`Stopped debugging ${state.routine.name}`);
+  }
+
+  async function resume(mode) {
+    if (!state.paused) return;
+    state.controlEpoch++;
+    state.paused = false; state.currentLine = -1;
+    for (const value of state.watches.values()) value.changed = false;
+    await setContext('paused', false);
+    setStatus(mode === 'step' ? 'Stepping…' : 'Continuing…');
+    await bridge.request(mode, { sessionId: state.sessionId });
+    render();
+    poll();
+  }
+
+  async function toggleBreakpoint(line, text) {
+    if (!state.routine || !isExecutable(text || (state.ddl || '').split(/\r?\n/)[line - 1] || '')) return;
+    const label = `L${line}`;
+    if (state.breakpoints.has(label)) state.breakpoints.delete(label); else state.breakpoints.add(label);
+    render();
+    await bridge.request('saveBreakpoints', { name: state.routine.name, labels: [...state.breakpoints] });
+  }
+
+  function addWatch(name) {
+    name = String(name || '').trim();
+    if (name && !state.watches.has(name)) {
+      const latest = [...state.log].reverse().find(entry => entry.varName !== '__BREAKPOINT__' && entry.varName.toLowerCase() === name.toLowerCase());
+      state.watches.set(name, latest ? { value: latest.varValue, changed: false } : {});
+    }
+    render();
+  }
+
+  function webviewHtml(webview) {
+    const script = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'resources', 'webview.js'));
+    const style = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'resources', 'webview.css'));
+    const nonce = Math.random().toString(36).slice(2);
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
+      <link rel="stylesheet" href="${style}"><title>MariaDB Procedure Debugger</title></head>
+      <body>
+        <header class="toolbar">
+          <button id="connect" class="secondary">Connect</button><span class="separator"></span>
+          <select id="routine" aria-label="Routine"><option value="">Select a routine…</option></select>
+          <button id="load">Load</button><button id="debug" class="success">▶ Debug</button><button id="stop" class="danger">■ Stop</button>
+          <span class="separator wide"></span><button id="continue" class="primary">▶ Continue <kbd>F5</kbd></button><button id="step" class="purple">↓ Step <kbd>F8</kbd></button>
+          <span class="spacer"></span><button id="reset" class="icon" title="Reset all debug changes">⋮</button>
+        </header>
+        <div id="banner" class="banner hidden"></div>
+        <main class="workspace">
+          <section class="source-pane"><div id="empty" class="empty">Connect and choose a routine to begin.</div><div id="source" class="source"></div></section>
+          <aside class="side-pane">
+            <section class="panel watches"><div class="panel-title"><span>Watches</span><label><input id="watch-all" type="checkbox"> All</label></div>
+              <form id="watch-form"><input id="watch-name" placeholder="Variable name"><button title="Add watch">＋</button></form>
+              <div class="table-wrap"><table><thead><tr><th>Name</th><th>Value</th><th></th></tr></thead><tbody id="watch-list"></tbody></table></div>
+            </section>
+            <section class="panel logs"><div class="panel-title"><span>Debug Log</span><button id="clear-log" class="link">Clear</button></div>
+              <div class="table-wrap"><table><thead><tr><th>Time</th><th>Label</th><th>Variable</th><th>Value</th></tr></thead><tbody id="log-list"></tbody></table></div>
+            </section>
+          </aside>
+        </main>
+        <footer id="status" class="status">Ready</footer>
+        <dialog id="connection-dialog"><form id="connection-form" method="dialog"><h2>Connect to MariaDB</h2>
+          <div class="connection-grid"><label>Host<input id="db-host" required></label><label>Port<input id="db-port" type="number" required></label>
+          <label>User<input id="db-user" required></label><label>Password<input id="db-password" type="password" placeholder="Use saved password"></label>
+          <label class="full">Database / schema<input id="db-database" required></label></div>
+          <div id="connection-error" class="form-error"></div><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button><button id="connect-submit" value="default" class="primary">Connect</button></div>
+        </form></dialog>
+        <div id="context-menu" class="context-menu hidden"><button id="context-add-watch"></button></div>
+        <script nonce="${nonce}" src="${script}"></script>
+      </body></html>`;
+  }
+
+  function openPanel() {
+    if (panel) { panel.reveal(vscode.ViewColumn.One); render(); return panel; }
+    panel = vscode.window.createWebviewPanel('mariaDbDebugger.panel', 'MariaDB Procedure Debugger', vscode.ViewColumn.One, {
+      enableScripts: true, retainContextWhenHidden: true,
+      localResourceRoots: [vscode.Uri.joinPath(context.extensionUri, 'resources')]
+    });
+    panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'resources', 'database-debug.svg');
+    panel.webview.html = webviewHtml(panel.webview);
+    panel.onDidDispose(() => { panel = undefined; }, null, context.subscriptions);
+    panel.webview.onDidReceiveMessage(async message => {
+      try {
+        switch (message.type) {
+          case 'ready':
+            render();
+            if (!state.connected) {
+              const config = vscode.workspace.getConfiguration('mariaDbDebugger');
+              panel.webview.postMessage({ type: 'showConnection', connection: {
+                host: config.get('host', 'localhost'), port: config.get('port', 3306),
+                user: config.get('user', ''), database: config.get('database', '')
+              }});
+            }
+            break;
+          case 'showConnection': await connect(); break;
+          case 'connect': await connect(message.connection); break;
+          case 'load': await loadRoutine(state.routines.find(r => r.name === message.name)); break;
+          case 'deploy': await deploy(); break;
+          case 'stop': await stop(); break;
+          case 'continue': await resume('continue'); break;
+          case 'step': await resume('step'); break;
+          case 'toggleBreakpoint': await toggleBreakpoint(message.line, message.text); break;
+          case 'addWatch': addWatch(message.name); break;
+          case 'removeWatch': state.watches.delete(message.name); render(); break;
+          case 'watchAll': state.watchAll = Boolean(message.enabled); render(); break;
+          case 'clearLog':
+            if (state.sessionId) await bridge.request('clearLog', { sessionId: state.sessionId });
+            state.log = []; state.lastId = 0; render(); break;
+          case 'reset': await vscode.commands.executeCommand('mariaDbDebugger.reset'); break;
+        }
+      } catch (error) { showError(error); }
+    }, null, context.subscriptions);
+    return panel;
   }
 
   const command = (name, handler) => context.subscriptions.push(vscode.commands.registerCommand(`mariaDbDebugger.${name}`, (...args) => Promise.resolve(handler(...args)).catch(showError)));
+  command('open', openPanel);
   command('connect', connect);
-  command('disconnect', async () => { stopPolling(); await bridge.request('disconnect'); state.connected = false; state.routines = []; routines.refresh(); await setContext('connected', false); setStatus('MariaDB Debugger'); });
-  command('refresh', async () => { state.routines = await bridge.request('routines'); routines.refresh(); });
+  command('disconnect', async () => { stopPolling(); await bridge.request('disconnect'); state.connected = false; state.routines = []; routines.refresh(); await setContext('connected', false); setStatus('Ready'); });
+  command('refresh', async () => { state.routines = await bridge.request('routines'); routines.refresh(); render(); });
   command('load', loadRoutine);
   command('deploy', deploy);
   command('stop', stop);
-  command('continue', async () => { if (state.paused) { await bridge.request('continue', { sessionId: state.sessionId }); refreshDecorations(-1); setStatus('Continuing…'); } });
-  command('step', async () => { if (state.paused) { await bridge.request('step', { sessionId: state.sessionId }); refreshDecorations(-1); setStatus('Stepping…'); } });
-  command('toggleBreakpoint', async () => {
-    const activeEditor = vscode.window.activeTextEditor;
-    if (!activeEditor || !state.routine || activeEditor.document.uri.scheme !== 'mariadb-debug') return;
-    const line = activeEditor.selection.active.line;
-    if (!isExecutable(activeEditor.document.lineAt(line).text)) { vscode.window.showInformationMessage('Breakpoints can only be set on executable SQL lines.'); return; }
-    const label = `L${line + 1}`;
-    if (state.breakpoints.has(label)) state.breakpoints.delete(label); else state.breakpoints.add(label);
-    await bridge.request('saveBreakpoints', { name: state.routine.name, labels: [...state.breakpoints] });
-    refreshDecorations(-1);
-  });
+  command('continue', () => resume('continue'));
+  command('step', () => resume('step'));
+  command('toggleBreakpoint', () => panel && panel.webview.postMessage({ type: 'toggleSelectedBreakpoint' }));
   command('addWatch', async () => {
     const name = await vscode.window.showInputBox({ title: 'Watch variable', prompt: 'Stored routine parameter or local variable name' });
-    if (name && !state.watches.has(name)) { state.watches.set(name, {}); watches.refresh(); }
+    addWatch(name);
   });
-  command('removeWatch', watch => { if (watch && watch.name) { state.watches.delete(watch.name); watches.refresh(); } });
-  command('clearLog', async () => { if (state.sessionId) await bridge.request('clearLog', { sessionId: state.sessionId }); state.log = []; state.lastId = 0; log.refresh(); });
+  command('removeWatch', watch => { if (watch && watch.name) { state.watches.delete(watch.name); render(); } });
+  command('clearLog', async () => { if (state.sessionId) await bridge.request('clearLog', { sessionId: state.sessionId }); state.log = []; state.lastId = 0; render(); });
   command('reset', async () => {
     const answer = await vscode.window.showWarningMessage('Restore all deployed routines and remove all debugger infrastructure?', { modal: true }, 'Reset All');
     if (answer !== 'Reset All') return;
-    stopPolling(); const result = await bridge.request('reset'); state.routines = result.routines || []; state.active = false; state.routine = undefined; state.ddl = '';
-    routines.refresh(); source.refresh(); await setContext('active', false); await setContext('loaded', false); setStatus('All debug changes reverted');
+    stopPolling(); const result = await bridge.request('reset'); state.routines = result.routines || []; state.active = false; state.routine = undefined; state.ddl = ''; state.currentLine = -1;
+    routines.refresh(); await setContext('active', false); await setContext('loaded', false); setStatus('All debug changes reverted');
   });
 
   context.subscriptions.push(
-    output, bridge, source, routines, watches, log, status, currentLineDecoration, breakpointDecoration,
-    vscode.workspace.registerTextDocumentContentProvider('mariadb-debug', source),
-    vscode.window.registerTreeDataProvider('mariaDbDebugger.routines', routines),
-    vscode.window.registerTreeDataProvider('mariaDbDebugger.watches', watches),
-    vscode.window.registerTreeDataProvider('mariaDbDebugger.log', log),
-    vscode.window.onDidChangeVisibleTextEditors(() => refreshDecorations(-1))
+    output, bridge, routines, status,
+    vscode.window.registerTreeDataProvider('mariaDbDebugger.routines', routines)
   );
   setContext('connected', false); setContext('loaded', false); setContext('active', false); setContext('paused', false);
 }

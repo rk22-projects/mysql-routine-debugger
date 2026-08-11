@@ -292,9 +292,10 @@ public class DbgConnection {
 
     public synchronized void updateState(String sessionId, String status) throws DbgException {
         try (PreparedStatement ps = conn.prepareStatement(
-                "UPDATE _dbg_state SET status = ? WHERE session_id = ?")) {
-            ps.setString(1, status);
-            ps.setString(2, sessionId);
+                "INSERT INTO _dbg_state (session_id, routine_name, status) VALUES (?, '', ?) " +
+                "ON DUPLICATE KEY UPDATE status = VALUES(status)")) {
+            ps.setString(1, sessionId);
+            ps.setString(2, status);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new DbgException("Failed to update state: " + e.getMessage(), e);
@@ -472,13 +473,6 @@ public class DbgConnection {
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new DbgException("Failed to clear log: " + e.getMessage(), e);
-        }
-        try (PreparedStatement ps = conn.prepareStatement(
-                "DELETE FROM _dbg_state WHERE session_id = ?")) {
-            ps.setString(1, sessionId);
-            ps.executeUpdate();
-        } catch (SQLException e) {
-            throw new DbgException("Failed to clear state: " + e.getMessage(), e);
         }
     }
 

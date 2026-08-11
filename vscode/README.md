@@ -8,17 +8,17 @@ Requirements: Java 17+, Maven, VS Code 1.96+, and Node.js when packaging a VSIX.
 
 1. From the repository root, run `mvn package`. This builds the shared core and the executable bridge at `vscode/target/proc-debugger-vscode-server.jar`.
 2. Open the `vscode` directory in VS Code and press F5 to launch an Extension Development Host.
-3. Open the MariaDB Debugger activity-bar view and choose **Connect**.
+3. Open the MariaDB Debugger activity-bar view and choose **Open Debugger**.
 
 To create an installable extension, run `npm run package` in this directory after the Maven build. The package script downloads `@vscode/vsce` through `npx` if it is not already installed.
 
 ## Workflow
 
-- Select a procedure or function in the **Routines** view to open its read-only SQL source.
-- Press F9 on an executable line to toggle a breakpoint.
+- Use the debugger panel's connection form, then select a procedure or function from its toolbar.
+- Click the source gutter or press F9 on a selected executable line to toggle a breakpoint.
 - Choose **Start Debugging**, then invoke the routine normally from any SQL client.
 - Use F5 to continue and F8 to step when the routine pauses.
-- Add variable names to **Watches**; values update when instrumented assignments are observed.
+- Right-click identifiers to add them to **Watches** and hover identifiers to inspect their latest value.
 - Choose **Stop Debugging** to restore the original routine.
 
 Connection fields are regular VS Code settings. The password is stored only in VS Code secret storage.
