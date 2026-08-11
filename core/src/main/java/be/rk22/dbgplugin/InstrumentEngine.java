@@ -265,6 +265,26 @@ public class InstrumentEngine {
         return result;
     }
 
+    // ── Callee detection ──────────────────────────────────────────────────────
+
+    private static final Pattern CALL_PAT = Pattern.compile(
+        "(?i)\\bCALL\\s+`?(\\w+)`?\\s*\\(");
+
+    /**
+     * Returns the set of routine names called by this DDL, excluding internal _dbg_/_orig_ routines.
+     * Best-effort: covers static CALL statements; does not resolve dynamic SQL.
+     */
+    public static Set<String> findCallees(String ddl) {
+        Set<String> names = new LinkedHashSet<>();
+        Matcher m = CALL_PAT.matcher(ddl);
+        while (m.find()) {
+            String name = m.group(1);
+            if (!name.startsWith("_dbg_") && !name.startsWith("_orig_"))
+                names.add(name);
+        }
+        return names;
+    }
+
     // ── Proxy builder ─────────────────────────────────────────────────────────
 
     /**

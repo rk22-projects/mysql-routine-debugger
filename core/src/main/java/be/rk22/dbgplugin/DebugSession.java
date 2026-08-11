@@ -1,6 +1,8 @@
 package be.rk22.dbgplugin;
 
+import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Manages one active debug session: drives the 600ms poll loop and
@@ -15,9 +17,10 @@ public class DebugSession {
     private volatile long    lastId   = 0;
     private volatile boolean paused   = false;
 
-    private ScheduledExecutorService poller;
-    private DebugEventListener       listener;
-    private Executor                 uiExecutor;
+    private ScheduledExecutorService         poller;
+    private DebugEventListener               listener;
+    private Executor                         uiExecutor;
+    private final List<String[]> pendingChildren = new CopyOnWriteArrayList<>();
 
     public DebugSession(String sessionId, String routineName, DbgConnection db) {
         this.sessionId   = sessionId;
@@ -49,6 +52,14 @@ public class DebugSession {
     }
 
     public boolean isPaused() { return paused; }
+
+    /**
+     * Register a deployed callee session to watch. When that session's first
+     * checkpoint fires (status = 'paused'), onCalleeStarted is dispatched to the UI.
+     */
+    public void registerChildSession(String routineName, String sessionId) {
+        pendingChildren.add(new String[]{routineName, sessionId});
+    }
 
     // ── Execution control ─────────────────────────────────────────────────────
 
@@ -90,6 +101,20 @@ public class DebugSession {
             } else if (!result.paused && paused) {
                 paused = false;
                 uiExecutor.execute(listener::onResumed);
+            }
+            // Check for deployed callees that have started and hit their first checkpoint
+            if (!pendingChildren.isEmpty()) {
+                List<String[]> fired = new ArrayList<>();
+                for (String[] child : pendingChildren) {
+                    try {
+                        if (db.isSessionPaused(child[1])) {
+                            fired.add(child);
+                            final String name = child[0], sid = child[1];
+                            uiExecutor.execute(() -> listener.onCalleeStarted(name, sid));
+                        }
+                    } catch (DbgException ignored) {}
+                }
+                pendingChildren.removeAll(fired);
             }
         } catch (DbgException e) {
             // Don't spam errors on every tick — only fire once per exception run

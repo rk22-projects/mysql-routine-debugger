@@ -24,6 +24,9 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     private static final Logger LOG = Logger.getLogger(DebuggerTopComponent.class.getName());
     private static DebuggerTopComponent INSTANCE;
 
+    // ── Mode ──────────────────────────────────────────────────────────────────
+    private final boolean isChild;
+
     // ── DB state ──────────────────────────────────────────────────────────────
     private Connection          conn;
     private DbgConnection       db;
@@ -32,6 +35,9 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     private String              currentRoutine;
     private String              currentRoutineType;
     private boolean             debugActive = false;
+
+    /** Callees auto-deployed alongside the primary routine; restored when primary stops. */
+    private final List<String[]> deployedCallees = new ArrayList<>();  // {name, type, sid}
 
     // ── UI ────────────────────────────────────────────────────────────────────
     private final JComboBox<RoutineInfo> routineCombo = new JComboBox<>();
@@ -51,21 +57,44 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     private final Map<String, String> watchPrev    = new HashMap<>();
     private final Set<String>         watchChanged = new HashSet<>();
 
-    // ── Singleton ─────────────────────────────────────────────────────────────
+    // ── Singleton (root only) ─────────────────────────────────────────────────
 
     public static synchronized DebuggerTopComponent findInstance() {
         if (INSTANCE == null) INSTANCE = new DebuggerTopComponent();
         return INSTANCE;
     }
 
-    // ── Constructor ───────────────────────────────────────────────────────────
+    // ── Constructors / factory ────────────────────────────────────────────────
 
     public DebuggerTopComponent() {
+        this(false);
+    }
+
+    private DebuggerTopComponent(boolean isChild) {
+        this.isChild = isChild;
         setName("MariaDB Procedure Debugger");
         setDisplayName("MariaDB Procedure Debugger");
         setLayout(new BorderLayout(0, 0));
         buildUI();
         wireActions();
+    }
+
+    /**
+     * Creates a child debug window for a step-in callee.
+     * The caller is responsible for calling open(), startSession(), and setDebugActive(true).
+     */
+    static DebuggerTopComponent createChildInstance(String routineName,
+                                                     DbgConnection db,
+                                                     Connection conn,
+                                                     String schema) {
+        DebuggerTopComponent tc = new DebuggerTopComponent(true);
+        tc.currentRoutine = routineName;
+        tc.conn   = conn;
+        tc.db     = db;
+        tc.schema = schema;
+        tc.setName("↵ " + routineName);
+        tc.setDisplayName("↵ " + routineName);
+        return tc;
     }
 
     @Override
@@ -78,56 +107,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     // ── UI construction ───────────────────────────────────────────────────────
 
     private void buildUI() {
-        // Outer toolbar: BorderLayout so we can push ⋮ to the right
-        JPanel toolbar = new JPanel(new BorderLayout());
-        toolbar.setBackground(new Color(0xF3, 0xF3, 0xF3));
-        toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(0xDD, 0xDD, 0xDD)));
-
-        // Left buttons
-        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
-        btnPanel.setOpaque(false);
-
-        routineCombo.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        routineCombo.setPreferredSize(new Dimension(200, 26));
-
-        style(btnLoad,   new Color(0xE0, 0xE0, 0xE0), Color.DARK_GRAY);
-        style(btnDeploy, new Color(0x27, 0x67, 0x49), Color.WHITE);
-        style(btnStop,   new Color(0xC0, 0x39, 0x2B), Color.WHITE);
-        style(btnCont,   new Color(0x0E, 0x63, 0x9C), Color.WHITE);
-        style(btnStep,   new Color(0x6B, 0x5C, 0xE7), Color.WHITE);
-
-        btnDeploy.setEnabled(false);
-        btnStop.setEnabled(false);
-        btnCont.setEnabled(false);
-        btnStep.setEnabled(false);
-
-        btnPanel.add(routineCombo);
-        btnPanel.add(btnLoad);
-        btnPanel.add(btnDeploy);
-        btnPanel.add(btnStop);
-        btnPanel.add(Box.createHorizontalStrut(12));
-        btnPanel.add(btnCont);
-        btnPanel.add(btnStep);
-        toolbar.add(btnPanel, BorderLayout.CENTER);
-
-        // Right side: ⋮ overflow menu (Reset All lives here)
-        JPopupMenu overflowMenu = new JPopupMenu();
-        JMenuItem  resetAllItem = new JMenuItem("⚠  Reset all debug changes…");
-        resetAllItem.addActionListener(e -> resetAll());
-        overflowMenu.add(resetAllItem);
-
-        JButton btnMore = new JButton("⋮");
-        style(btnMore, new Color(0xE8, 0xE8, 0xE8), new Color(0x44, 0x44, 0x44));
-        btnMore.setFont(btnMore.getFont().deriveFont(Font.BOLD, 15f));
-        btnMore.setToolTipText("More actions");
-        btnMore.addActionListener(e -> overflowMenu.show(btnMore, 0, btnMore.getHeight()));
-
-        JPanel morePanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 4));
-        morePanel.setOpaque(false);
-        morePanel.add(btnMore);
-        toolbar.add(morePanel, BorderLayout.EAST);
-
-        // Banner
+        // Banner (shared by root and child)
         banner.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createMatteBorder(0, 0, 2, 0, new Color(0x27, 0xAE, 0x60)),
             BorderFactory.createEmptyBorder(4, 10, 4, 10)));
@@ -138,8 +118,12 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         banner.setVisible(false);
 
         JPanel topArea = new JPanel(new BorderLayout());
-        topArea.add(toolbar, BorderLayout.NORTH);
-        topArea.add(banner,  BorderLayout.SOUTH);
+        if (isChild) {
+            buildChildToolbar(topArea);
+        } else {
+            buildRootToolbar(topArea);
+        }
+        topArea.add(banner, BorderLayout.SOUTH);
         add(topArea, BorderLayout.NORTH);
 
         // Source panel (left) + right panel in a split pane
@@ -166,6 +150,77 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         add(statusBar, BorderLayout.SOUTH);
     }
 
+    private void buildRootToolbar(JPanel topArea) {
+        JPanel toolbar = new JPanel(new BorderLayout());
+        toolbar.setBackground(new Color(0xF3, 0xF3, 0xF3));
+        toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(0xDD, 0xDD, 0xDD)));
+
+        JPanel btnPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 4));
+        btnPanel.setOpaque(false);
+
+        routineCombo.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        routineCombo.setPreferredSize(new Dimension(200, 26));
+
+        style(btnLoad,   new Color(0xE0, 0xE0, 0xE0), Color.DARK_GRAY);
+        style(btnDeploy, new Color(0x27, 0x67, 0x49), Color.WHITE);
+        style(btnStop,   new Color(0xC0, 0x39, 0x2B), Color.WHITE);
+        style(btnCont,   new Color(0x0E, 0x63, 0x9C), Color.WHITE);
+        style(btnStep,   new Color(0x6B, 0x5C, 0xE7), Color.WHITE);
+
+        btnDeploy.setEnabled(false);
+        btnStop.setEnabled(false);
+        btnCont.setEnabled(false);
+        btnStep.setEnabled(false);
+
+        btnPanel.add(routineCombo);
+        btnPanel.add(btnLoad);
+        btnPanel.add(btnDeploy);
+        btnPanel.add(btnStop);
+        btnPanel.add(Box.createHorizontalStrut(12));
+        btnPanel.add(btnCont);
+        btnPanel.add(btnStep);
+        toolbar.add(btnPanel, BorderLayout.CENTER);
+
+        JPopupMenu overflowMenu = new JPopupMenu();
+        JMenuItem  resetAllItem = new JMenuItem("⚠  Reset all debug changes…");
+        resetAllItem.addActionListener(e -> resetAll());
+        overflowMenu.add(resetAllItem);
+
+        JButton btnMore = new JButton("⋮");
+        style(btnMore, new Color(0xE8, 0xE8, 0xE8), new Color(0x44, 0x44, 0x44));
+        btnMore.setFont(btnMore.getFont().deriveFont(Font.BOLD, 15f));
+        btnMore.setToolTipText("More actions");
+        btnMore.addActionListener(e -> overflowMenu.show(btnMore, 0, btnMore.getHeight()));
+
+        JPanel morePanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 4));
+        morePanel.setOpaque(false);
+        morePanel.add(btnMore);
+        toolbar.add(morePanel, BorderLayout.EAST);
+
+        topArea.add(toolbar, BorderLayout.NORTH);
+    }
+
+    private void buildChildToolbar(JPanel topArea) {
+        JPanel toolbar = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        toolbar.setBackground(new Color(0x24, 0x41, 0x5F));
+        toolbar.setBorder(BorderFactory.createMatteBorder(0, 0, 1, 0, new Color(0x1A, 0x2E, 0x44)));
+
+        JLabel lbl = new JLabel("  ↵  Step-in");
+        lbl.setForeground(new Color(0xAD, 0xC8, 0xFF));
+        lbl.setFont(lbl.getFont().deriveFont(Font.BOLD, 13f));
+
+        style(btnCont, new Color(0x0E, 0x63, 0x9C), Color.WHITE);
+        style(btnStep, new Color(0x6B, 0x5C, 0xE7), Color.WHITE);
+        btnCont.setEnabled(false);
+        btnStep.setEnabled(false);
+
+        toolbar.add(lbl);
+        toolbar.add(Box.createHorizontalStrut(8));
+        toolbar.add(btnCont);
+        toolbar.add(btnStep);
+        topArea.add(toolbar, BorderLayout.NORTH);
+    }
+
     private static void style(JButton btn, Color bg, Color fg) {
         btn.setBackground(bg);
         btn.setForeground(fg);
@@ -179,11 +234,8 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     // ── Wire actions ──────────────────────────────────────────────────────────
 
     private void wireActions() {
-        btnLoad.addActionListener(e  -> loadRoutine());
-        btnDeploy.addActionListener(e -> deployDebug());
-        btnStop.addActionListener(e  -> stopDebugging());
-        btnCont.addActionListener(e  -> doContinue());
-        btnStep.addActionListener(e  -> doStep());
+        btnCont.addActionListener(e -> doContinue());
+        btnStep.addActionListener(e -> doStep());
 
         logPanel.setOnClear(this::clearLog);
 
@@ -205,8 +257,13 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         });
         sourcePanel.setOnAddWatch(watchPanel::addVariable);
 
+        if (!isChild) {
+            btnLoad.addActionListener(e   -> loadRoutine());
+            btnDeploy.addActionListener(e -> deployDebug());
+            btnStop.addActionListener(e   -> stopDebugging());
+        }
+
         // F5 / F8 via KeyboardFocusManager so NetBeans doesn't swallow them first.
-        // Only intercept when our TC is the active component and a session is paused.
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(evt -> {
             if (evt.getID() != KeyEvent.KEY_PRESSED) return false;
             if (!isShowing()) return false;
@@ -348,7 +405,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         watchPrev.clear();
         watchChanged.clear();
         String sid = newSessionId();
-        setDebugActive(false);  // disable both buttons while working
+        setDebugActive(false);
         btnDeploy.setEnabled(false);
         setStatus("Deploying…", false);
 
@@ -356,44 +413,28 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         final String routineType = currentRoutineType;
         RequestProcessor.getDefault().post(() -> {
             try {
-                String originalDdl  = db.fetchRoutineDdl(routine, routineType);
-                String origCopy     = InstrumentEngine.buildOrigCopy(routine, originalDdl);
-                String instrumented = InstrumentEngine.instrumentAuto(routine, originalDdl, sid, conn, schema);
+                String originalDdl = db.fetchRoutineDdl(routine, routineType);
+                deployRoutineToDb(routine, routineType, originalDdl, sid, "running");
 
-                List<String> pNames = new ArrayList<>();
-                List<String> pTypes = new ArrayList<>();
-                List<String> pModes = new ArrayList<>();
-                try (PreparedStatement ps = conn.prepareStatement(
-                        "SELECT PARAMETER_NAME, DTD_IDENTIFIER, PARAMETER_MODE " +
-                        "FROM information_schema.PARAMETERS " +
-                        "WHERE SPECIFIC_SCHEMA=? AND SPECIFIC_NAME=? AND ORDINAL_POSITION>0 " +
-                        "ORDER BY ORDINAL_POSITION")) {
-                    ps.setString(1, schema); ps.setString(2, routine);
-                    ResultSet rs = ps.executeQuery();
-                    while (rs.next()) {
-                        pNames.add(rs.getString(1));
-                        pTypes.add(rs.getString(2));
-                        pModes.add(rs.getString(3) != null ? rs.getString(3) : "IN");
-                    }
+                // Auto-instrument routines called by this one (one level deep)
+                Set<String> calleeNames = InstrumentEngine.findCallees(originalDdl);
+                List<String[]> newCallees = new ArrayList<>();
+                for (String callee : calleeNames) {
+                    if (db.isDeployed(callee)) continue;
+                    String calleeType = findRoutineType(callee);
+                    if (calleeType == null) continue;
+                    String calleeSid = newSessionId();
+                    String calleeDdl = db.fetchRoutineDdl(callee, calleeType);
+                    deployRoutineToDb(callee, calleeType, calleeDdl, calleeSid, "step");
+                    newCallees.add(new String[]{callee, calleeType, calleeSid});
                 }
-                String returnType = "FUNCTION".equalsIgnoreCase(routineType) ?
-                    fetchReturnType(routine) : null;
-                boolean deterministic = false;
-                try (PreparedStatement ps = conn.prepareStatement(
-                        "SELECT IS_DETERMINISTIC FROM information_schema.ROUTINES " +
-                        "WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
-                    ps.setString(1, schema); ps.setString(2, routine);
-                    ResultSet rs = ps.executeQuery();
-                    if (rs.next()) deterministic = "YES".equals(rs.getString(1));
-                }
-                String proxy = InstrumentEngine.buildProxy(
-                    routine, routineType, pNames, pTypes, pModes, returnType, deterministic, sid);
-
-                db.deployDebug(routine, routineType, originalDdl, origCopy, instrumented, proxy, sid);
-                db.initSessionState(sid, routine);
 
                 SwingUtilities.invokeLater(() -> {
                     startSession(sid);
+                    for (String[] c : newCallees) {
+                        session.registerChildSession(c[0], c[2]);
+                        deployedCallees.add(c);
+                    }
                     showBanner(routine);
                     setDebugActive(true);
                     setStatus("Debug active — call " + routine + "(…) in your SQL client", false);
@@ -405,6 +446,58 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
                 });
             }
         });
+    }
+
+    /**
+     * Instruments and deploys a single routine. Must be called from a background thread.
+     * @param initStatus  "running" for the primary routine, "step" for auto-deployed callees
+     */
+    private void deployRoutineToDb(String routine, String routineType, String originalDdl,
+                                    String sid, String initStatus) throws Exception {
+        String origCopy     = InstrumentEngine.buildOrigCopy(routine, originalDdl);
+        String instrumented = InstrumentEngine.instrumentAuto(routine, originalDdl, sid, conn, schema);
+
+        List<String> pNames = new ArrayList<>();
+        List<String> pTypes = new ArrayList<>();
+        List<String> pModes = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT PARAMETER_NAME, DTD_IDENTIFIER, PARAMETER_MODE " +
+                "FROM information_schema.PARAMETERS " +
+                "WHERE SPECIFIC_SCHEMA=? AND SPECIFIC_NAME=? AND ORDINAL_POSITION>0 " +
+                "ORDER BY ORDINAL_POSITION")) {
+            ps.setString(1, schema); ps.setString(2, routine);
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) {
+                pNames.add(rs.getString(1));
+                pTypes.add(rs.getString(2));
+                pModes.add(rs.getString(3) != null ? rs.getString(3) : "IN");
+            }
+        }
+        String returnType = "FUNCTION".equalsIgnoreCase(routineType) ? fetchReturnType(routine) : null;
+        boolean deterministic = false;
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT IS_DETERMINISTIC FROM information_schema.ROUTINES " +
+                "WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
+            ps.setString(1, schema); ps.setString(2, routine);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) deterministic = "YES".equals(rs.getString(1));
+        }
+        String proxy = InstrumentEngine.buildProxy(
+            routine, routineType, pNames, pTypes, pModes, returnType, deterministic, sid);
+
+        db.deployDebug(routine, routineType, originalDdl, origCopy, instrumented, proxy, sid);
+        db.initSessionState(sid, routine, initStatus);
+    }
+
+    private String findRoutineType(String name) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT ROUTINE_TYPE FROM information_schema.ROUTINES " +
+                "WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
+            ps.setString(1, schema);
+            ps.setString(2, name);
+            ResultSet rs = ps.executeQuery();
+            return rs.next() ? rs.getString(1) : null;
+        }
     }
 
     private String fetchReturnType(String routineName) throws SQLException {
@@ -423,8 +516,11 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         btnStop.setEnabled(false);
         setStatus("Stopping…", false);
 
-        final String routine     = currentRoutine;
-        final String routineType = currentRoutineType;
+        final String routine          = currentRoutine;
+        final String routineType      = currentRoutineType;
+        final List<String[]> callees  = new ArrayList<>(deployedCallees);
+        deployedCallees.clear();
+
         RequestProcessor.getDefault().post(() -> {
             try {
                 // Unblock any paused DB session so the caller's SQL doesn't hang
@@ -435,12 +531,25 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
                 String origDdl = db.loadOriginalDdl(routine);
                 if (origDdl == null) {
                     SwingUtilities.invokeLater(() -> {
-                        setDebugActive(true); // was still active
+                        setDebugActive(true);
                         showError("No saved original found.");
                     });
                     return;
                 }
                 db.restoreOriginal(routine, routineType, origDdl);
+
+                // Unblock and restore all auto-deployed callees
+                for (String[] callee : callees) {
+                    try {
+                        String calleeSid = db.loadSessionId(callee[0]);
+                        if (calleeSid != null) {
+                            try { db.updateState(calleeSid, "continue"); } catch (DbgException ignored) {}
+                        }
+                        String calleeDdl = db.loadOriginalDdl(callee[0]);
+                        if (calleeDdl != null) db.restoreOriginal(callee[0], callee[1], calleeDdl);
+                    } catch (DbgException ignored) {}
+                }
+
                 String freshDdl = db.fetchRoutineDdl(routine, routineType);
                 SwingUtilities.invokeLater(() -> {
                     hideBanner();
@@ -451,7 +560,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
                 });
             } catch (DbgException ex) {
                 SwingUtilities.invokeLater(() -> {
-                    setDebugActive(true); // still active — let user retry
+                    setDebugActive(true);
                     showError("Stop failed: " + ex.getMessage());
                 });
             }
@@ -470,6 +579,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         if (r != JOptionPane.YES_OPTION) return;
 
         stopSession();
+        deployedCallees.clear();
         logPanel.clear();
         watchPanel.clearValues();
         watchPrev.clear();
@@ -484,7 +594,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         RequestProcessor.getDefault().post(() -> {
             try {
                 db.restoreAll(currentSchema);
-                db.setupInfrastructure();   // recreate tables so user can deploy again immediately
+                db.setupInfrastructure();
                 List<RoutineInfo> routines = db.fetchRoutines(currentSchema);
                 SwingUtilities.invokeLater(() -> {
                     routineCombo.removeAllItems();
@@ -551,8 +661,10 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
     private void setDebugActive(boolean active) {
         debugActive = active;
-        btnDeploy.setEnabled(!active && db != null);
-        btnStop.setEnabled(active);
+        if (!isChild) {
+            btnDeploy.setEnabled(!active && db != null);
+            btnStop.setEnabled(active);
+        }
     }
 
     private void setPaused(boolean on) {
@@ -596,6 +708,44 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     @Override
     public void onError(String message) {
         LOG.warning("[dbg] " + message);
+    }
+
+    @Override
+    public void onCalleeStarted(String routineName, String sessionId) {
+        // Already on the EDT (dispatched by SwingUtilities::invokeLater in DebugSession.poll)
+        DebuggerTopComponent child = createChildInstance(routineName, db, conn, schema);
+
+        Mode m = WindowManager.getDefault().findMode("editor");
+        if (m != null) m.dockInto(child);
+        child.open();
+        child.requestActive();
+
+        // Start the poll loop for this child session
+        child.startSession(sessionId);
+        child.setDebugActive(true);
+        child.setPaused(true);
+        child.setStatus("⏸  Paused in " + routineName + " (step-in)", true);
+
+        // Load callee source and breakpoints in the background
+        RequestProcessor.getDefault().post(() -> {
+            try {
+                String ddl  = db.loadOriginalDdl(routineName);
+                String type = db.loadOriginalType(routineName);
+                if (ddl == null && type != null) ddl = db.fetchRoutineDdl(routineName, type);
+                List<String> bps = db.loadBreakpoints(routineName);
+                final String finalDdl  = ddl;
+                final String finalType = type;
+                SwingUtilities.invokeLater(() -> {
+                    if (finalType != null) child.currentRoutineType = finalType;
+                    child.sourcePanel.setSource(finalDdl);
+                    child.sourcePanel.setBreakpoints(bps);
+                    child.showBanner(routineName);
+                });
+            } catch (DbgException ex) {
+                SwingUtilities.invokeLater(() ->
+                    child.showError("Failed to load callee source: " + ex.getMessage()));
+            }
+        });
     }
 
     // ── UI helpers ────────────────────────────────────────────────────────────

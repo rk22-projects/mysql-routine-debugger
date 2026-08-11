@@ -193,6 +193,18 @@ public class DbgConnection {
         }
     }
 
+    /** Returns the routine_type recorded at deploy time, or null if not deployed. */
+    public String loadOriginalType(String name) throws DbgException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT routine_type FROM _dbg_originals WHERE routine_name = ?")) {
+            ps.setString(1, name);
+            ResultSet rs = ps.executeQuery();
+            return rs.next() ? rs.getString(1) : null;
+        } catch (SQLException e) {
+            throw new DbgException("Failed to load original type: " + e.getMessage(), e);
+        }
+    }
+
     /** Returns original DDL, or null if not deployed. */
     public String loadOriginalDdl(String name) throws DbgException {
         try (PreparedStatement ps = conn.prepareStatement(
@@ -279,14 +291,30 @@ public class DbgConnection {
     // ── Execution control ─────────────────────────────────────────────────────
 
     public synchronized void initSessionState(String sessionId, String routineName) throws DbgException {
+        initSessionState(sessionId, routineName, "running");
+    }
+
+    public synchronized void initSessionState(String sessionId, String routineName, String status) throws DbgException {
         try (PreparedStatement ps = conn.prepareStatement(
-                "INSERT INTO _dbg_state (session_id, routine_name, status) VALUES (?, ?, 'running') " +
-                "ON DUPLICATE KEY UPDATE status = 'running'")) {
+                "INSERT INTO _dbg_state (session_id, routine_name, status) VALUES (?, ?, ?) " +
+                "ON DUPLICATE KEY UPDATE status = ?")) {
             ps.setString(1, sessionId);
             ps.setString(2, routineName);
+            ps.setString(3, status);
+            ps.setString(4, status);
             ps.executeUpdate();
         } catch (SQLException e) {
             throw new DbgException("Failed to initialize session state: " + e.getMessage(), e);
+        }
+    }
+
+    public boolean isSessionPaused(String sessionId) throws DbgException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM _dbg_state WHERE session_id = ? AND status = 'paused'")) {
+            ps.setString(1, sessionId);
+            return ps.executeQuery().next();
+        } catch (SQLException e) {
+            throw new DbgException("Failed to check session state: " + e.getMessage(), e);
         }
     }
 
