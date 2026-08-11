@@ -1,38 +1,42 @@
 # MySQL Routine Debugger
 
-MySQL Routine Debugger provides interactive debugging for stored procedures and functions through three frontends:
+Debug MySQL and MariaDB stored procedures and functions with breakpoints, stepping, watches, variable inspection, and execution logs.
 
+[![MySQL Routine Debugger paused in Visual Studio Code](docs/images/vscode_mysql_debugger.png)](docs/images/vscode_mysql_debugger.png)
+
+*A routine paused in the Visual Studio Code frontend. Click the image to view it at full size.*
+
+The debugger is available through three frontends:
+
+- Visual Studio Code extension
 - Apache NetBeans plugin
 - Standalone JavaFX application
-- Visual Studio Code extension
 
-The frontends share the same debugging features, including breakpoints, stepping, watches, variable inspection, and execution logs.
+All three frontends provide the same core debugging workflow, so you can use the interface that best fits your development environment.
 
 > [!WARNING]
 > Use the debugger only on development or test databases. The connected account must be authorized to inspect, create, replace, and restore routines and to create supporting objects in the selected schema.
 
-## Database compatibility
+## Compatibility and requirements
 
-MySQL is the default connection type. MariaDB remains available as a separate connection option, and the matching JDBC driver is selected automatically.
+MySQL is the default connection type. MariaDB is available as a separate option, with the matching JDBC driver selected automatically. Compatibility work targets modern MySQL and MariaDB releases, but not every server version, SQL mode, authentication configuration, or routine syntax has been verified yet.
 
-Compatibility work currently targets modern MySQL and MariaDB releases. Full behavior across every server version, SQL mode, authentication configuration, and routine syntax has not yet been verified. Treat this branch as pre-release software and validate it against a disposable database before wider use.
-
-## Requirements
+You will need:
 
 - Java 17 or newer for the standalone application
-- Apache NetBeans for the NetBeans frontend
-- Visual Studio Code 1.96 or newer for the VS Code frontend
+- Visual Studio Code 1.96 or newer for the VS Code extension
+- Apache NetBeans for the NetBeans plugin
 - A reachable MySQL or MariaDB server
 - A database account with the required routine and schema privileges
 
-## Using the debugger
+## Quick start
 
-1. Choose MySQL or MariaDB and enter the connection details.
+1. Open your preferred frontend and connect to a development or test database.
 2. Select a stored procedure or function.
-3. Add breakpoints and start debugging.
-4. Invoke the routine from another SQL client or application.
+3. Add breakpoints and start the debug session.
+4. Invoke the routine from a separate SQL client or application connection.
 5. Inspect variables and watches when execution pauses.
-6. Continue, step, or stop the session when finished.
+6. Continue, step into, step over, step out, or stop the session.
 
 Use **Reset All Debug Changes** if an earlier session did not close normally.
 
@@ -43,6 +47,7 @@ core/        Shared database and debugger logic
 plugin/      Apache NetBeans frontend
 standalone/  JavaFX frontend
 vscode/      Visual Studio Code frontend
+docs/        Documentation images and supporting files
 ```
 
 The former build and installation scripts are preserved on the `build-scripts` branch while the cross-database packaging workflow is redesigned.
