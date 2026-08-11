@@ -6,9 +6,84 @@ param(
     [ValidatePattern('^\d+(?:\.\d+)?$')][string]$NetBeansDownloadVersion = '27'
 )
 
-. "$PSScriptRoot\lib\Bootstrap.ps1"
-$repo = Get-RepoRoot $PSScriptRoot
-Ensure-Java17 (-not $SkipToolInstall) | Out-Null
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+
+function Invoke-External([string]$FilePath, [string[]]$Arguments) {
+    Write-Host "> $FilePath $($Arguments -join ' ')" -ForegroundColor DarkGray
+    & $FilePath @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "Command failed with exit code ${LASTEXITCODE}: $FilePath" }
+}
+
+function Install-WingetPackage([string]$Id, [string]$DisplayName) {
+    $winget = Get-Command winget -ErrorAction SilentlyContinue
+    if (-not $winget) { throw "$DisplayName is missing and winget is unavailable." }
+    Write-Host "Installing $DisplayName with winget..." -ForegroundColor Cyan
+    Invoke-External $winget.Source @('install', '--exact', '--id', $Id, '--silent', '--accept-package-agreements', '--accept-source-agreements')
+}
+
+function Get-JavaMajor([string]$Executable) {
+    try {
+        $info = [System.Diagnostics.ProcessStartInfo]::new()
+        $info.FileName = $Executable
+        $info.Arguments = '-version'
+        $info.UseShellExecute = $false
+        $info.RedirectStandardOutput = $true
+        $info.RedirectStandardError = $true
+        $process = [System.Diagnostics.Process]::Start($info)
+        $text = $process.StandardOutput.ReadToEnd() + $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        if ($text -match 'version\s+"(?<major>\d+)') { return [int]$Matches.major }
+    } catch {}
+    return 0
+}
+
+function Find-Java17 {
+    $candidates = [System.Collections.Generic.List[string]]::new()
+    if ($env:JAVA_HOME) { $candidates.Add((Join-Path $env:JAVA_HOME 'bin\java.exe')) }
+    $pathJava = Get-Command java -ErrorAction SilentlyContinue
+    if ($pathJava) { $candidates.Add($pathJava.Source) }
+    foreach ($root in @('Java', 'Eclipse Adoptium', 'Microsoft', 'Amazon Corretto')) {
+        $folder = Join-Path ${env:ProgramFiles} $root
+        if (Test-Path $folder) {
+            Get-ChildItem $folder -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                $candidates.Add((Join-Path $_.FullName 'bin\java.exe'))
+            }
+        }
+    }
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if ((Test-Path $candidate) -and (Get-JavaMajor $candidate) -ge 17) { return (Resolve-Path $candidate).Path }
+    }
+    return $null
+}
+
+function Ensure-Java17 {
+    $java = Find-Java17
+    if (-not $java -and -not $SkipToolInstall) {
+        Install-WingetPackage 'EclipseAdoptium.Temurin.17.JDK' 'Eclipse Temurin JDK 17'
+        $java = Find-Java17
+    }
+    if (-not $java) { throw 'Java 17+ was not found. Install it or omit -SkipToolInstall.' }
+    $env:JAVA_HOME = Split-Path (Split-Path $java -Parent) -Parent
+    $env:Path = "$(Split-Path $java -Parent);$env:Path"
+    Write-Host "Using Java $(Get-JavaMajor $java): $java" -ForegroundColor Green
+}
+
+function Invoke-MavenWrapper([string[]]$Arguments) {
+    Invoke-External (Join-Path $repo 'mvnw.cmd') $Arguments
+}
+
+function Reset-Directory([string]$Path) {
+    if (Test-Path $Path) {
+        $resolved = (Resolve-Path $Path).Path
+        if (-not $resolved.StartsWith($repo, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe output path: $resolved" }
+        Remove-Item $resolved -Recurse -Force
+    }
+    New-Item -ItemType Directory -Path $Path -Force | Out-Null
+}
+
+Ensure-Java17
 
 function Get-NetBeansMajor([string]$Path) {
     if (-not $Path) { return 0 }
@@ -93,7 +168,7 @@ Write-Host "Using Apache NetBeans ${netBeansMajor}: $NetBeansHome" -ForegroundCo
 
 $dbModule = Join-Path $NetBeansHome 'ide\modules\org-netbeans-modules-db.jar'
 Write-Host 'Registering the NetBeans DB Explorer API in the local Maven repository...' -ForegroundColor Cyan
-Invoke-MavenWrapper $repo @(
+Invoke-MavenWrapper @(
     '-N', 'org.apache.maven.plugins:maven-install-plugin:3.1.4:install-file',
     "-Dfile=$dbModule", '-DgroupId=org.netbeans.modules',
     '-DartifactId=org-netbeans-modules-db', "-Dversion=$netBeansRelease",
@@ -101,7 +176,7 @@ Invoke-MavenWrapper $repo @(
 )
 
 Write-Host 'Building the NetBeans plugin...' -ForegroundColor Cyan
-Invoke-MavenWrapper $repo @("-Dnb.version=$netBeansRelease", '-pl', 'plugin', '-am', 'clean', 'package')
+Invoke-MavenWrapper @("-Dnb.version=$netBeansRelease", '-pl', 'plugin', '-am', 'clean', 'package')
 $nbm = Join-Path $repo 'plugin\target\proc-debugger-nb-1.0-SNAPSHOT.nbm'
 if (-not (Test-Path $nbm)) { throw "NetBeans module was not produced: $nbm" }
 

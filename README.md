@@ -1,143 +1,156 @@
 # MariaDB Procedure Debugger
 
-A debugger for MariaDB stored procedures and functions, available as:
+A debugger for MariaDB stored procedures and functions, available as an Apache NetBeans plugin, a standalone JavaFX application, and a Visual Studio Code extension.
 
-- An Apache NetBeans plugin
-- A standalone JavaFX application
-- A Visual Studio Code extension
-
-All three frontends provide breakpoints, stepping, watches, variable inspection, and execution logs.
+All frontends provide breakpoints, stepping, watches, variable inspection, and execution logs.
 
 > [!WARNING]
 > Use the debugger only on development or test databases with an appropriately privileged database account.
 
-## Before you start
+## What you need
 
-The provided scripts currently target Windows 10 and 11. You need:
-
+- Windows 10/11 or a supported Linux distribution
 - A reachable MariaDB database
 - Internet access during the first build
-- PowerShell 5.1 or newer, which is included with Windows
-- Windows Package Manager (`winget`) if prerequisites need to be installed automatically
+- Git, unless you download the source as a ZIP
 
-You do not need to install Maven. The repository includes the [Apache Maven Wrapper](https://maven.apache.org/wrapper/) and downloads the correct Maven version on first use.
+The installers obtain the other required tools where possible. Maven does not need to be installed separately because the repository contains the [Apache Maven Wrapper](https://maven.apache.org/wrapper/).
 
 ## Get the source code
 
-If Git is installed, open Command Prompt and run:
+Open a terminal and run:
 
-```bat
+```text
 git clone https://github.com/fransensteven/proc-debugger-nb.git
 cd proc-debugger-nb
 ```
 
-If you already cloned the project, update it with:
+For an existing clone, open its folder and run `git pull` instead. You may also download the repository as a ZIP from GitHub and extract it.
 
-```bat
-git pull
-```
+## Windows installation
 
-You can also download the repository as a ZIP from GitHub and extract it. In either case, open the resulting `proc-debugger-nb` folder before running an installer.
-
-An easy way to open a command window in the correct folder is to select the folder in File Explorer, type `cmd` in the address bar, and press Enter.
-
-## Quick installation
-
-Choose one frontend and run its command from the repository root:
+Open the project folder in File Explorer, type `cmd` in the address bar, and press Enter. Then run one of these commands:
 
 | Frontend | Command |
 | --- | --- |
 | NetBeans | `scripts\install-netbeans.cmd` |
-| Standalone application | `scripts\install-standalone.cmd` |
+| Standalone | `scripts\install-standalone.cmd` |
 | Visual Studio Code | `scripts\install-vscode.cmd` |
 
-The scripts check the required tools, install missing tools where possible, build the selected frontend, and prepare it for use.
+The `.cmd` file is the convenient entry point. Each one invokes a self-contained PowerShell installer in the same folder.
 
-### NetBeans plugin
-
-Run:
+### NetBeans on Windows
 
 ```bat
 scripts\install-netbeans.cmd
 ```
 
-The installer looks for an existing Apache NetBeans installation and builds against that version. It does not reject earlier or later NetBeans releases, although compatibility outside the versions already tested by the project should be verified.
+The installer finds an existing Apache NetBeans installation and builds for the detected version. Earlier and later releases are accepted, but versions not previously tested by the project should be verified before wider use.
 
-If NetBeans is not found, the script downloads a default version. A different download version can be requested:
+If NetBeans is absent, version 27 is downloaded by default. Choose another downloadable release with:
 
 ```bat
 scripts\install-netbeans.cmd -NetBeansDownloadVersion 28
 ```
 
-If NetBeans is installed in a custom folder, specify it directly:
+For a custom installation or user profile:
 
 ```bat
 scripts\install-netbeans.cmd -NetBeansHome "C:\Tools\netbeans"
-```
-
-The installer detects the NetBeans version and selects the matching user directory automatically. You can override that location when using a custom profile:
-
-```bat
 scripts\install-netbeans.cmd -NetBeansHome "C:\Tools\netbeans" -NetBeansUserDir "D:\NetBeansUser\28"
 ```
 
-When installation finishes:
+After installation, restart NetBeans and open **Window → MariaDB Procedure Debugger**. The generated `.nbm` is also available under `release\netbeans`.
 
-1. Close and restart NetBeans.
-2. Open **Window → MariaDB Procedure Debugger**.
-3. Alternatively, use the debugger action on a supported procedure or function in Database Explorer.
+To install the `.nbm` manually, open **Tools → Plugins → Downloaded → Add Plugins** in NetBeans, select the file, and follow the prompts.
 
-The generated `.nbm` package is also copied to `release\netbeans`. To install that file manually, open **Tools → Plugins → Downloaded → Add Plugins** in NetBeans, select the `.nbm`, and follow the prompts.
-
-### Standalone application
-
-Run:
+### Standalone application on Windows
 
 ```bat
 scripts\install-standalone.cmd
 ```
 
-The script installs Java 17 if necessary and builds the complete application. When it finishes, start the debugger with:
+When the build finishes, double-click `MariaDB Procedure Debugger.cmd` under `release\standalone`, or run:
 
 ```bat
 "release\standalone\MariaDB Procedure Debugger.cmd"
 ```
 
-You can also open `release\standalone` in File Explorer and double-click **MariaDB Procedure Debugger.cmd**.
-
-### Visual Studio Code extension
-
-Run:
+### Visual Studio Code on Windows
 
 ```bat
 scripts\install-vscode.cmd
 ```
 
-The script installs Java 17, Node.js, and Visual Studio Code when they are missing. It then builds the extension and installs or upgrades it in VS Code.
+The installer builds and installs the extension. Reload VS Code, select the MariaDB Debugger icon in the activity bar, and choose **Open Debugger**.
 
-When installation finishes:
-
-1. Reload or restart Visual Studio Code.
-2. Select the MariaDB Debugger icon in the activity bar.
-3. Select **Open Debugger**.
-
-To create the extension package without installing it:
+To build a `.vsix` without installing it:
 
 ```bat
 scripts\install-vscode.cmd -SkipExtensionInstall
 ```
 
-The `.vsix` is copied to `release\vscode`. To install it manually, open the Extensions view in VS Code, select the **…** menu, choose **Install from VSIX…**, and select the generated file.
+The `.vsix` is placed under `release\vscode`. It can be installed manually from the Extensions view using **… → Install from VSIX…**.
 
-## Prevent automatic tool installation
+Add `-SkipToolInstall` to any Windows command to prevent automatic installation of missing tools.
 
-Add `-SkipToolInstall` to any installer if you do not want it to install missing prerequisites:
+## Linux installation
 
-```bat
-scripts\install-standalone.cmd -SkipToolInstall
+Open a terminal in the project directory. The Linux installers support `apt`, `dnf`, `yum`, `pacman`, and `zypper`. They use `sudo` only when a system package must be installed.
+
+Run one of these commands:
+
+| Frontend | Command |
+| --- | --- |
+| NetBeans | `bash scripts/install-netbeans.sh` |
+| Standalone | `bash scripts/install-standalone.sh` |
+| Visual Studio Code | `bash scripts/install-vscode.sh` |
+
+Using `bash` explicitly works even when executable file permissions were lost while extracting a ZIP.
+
+### NetBeans on Linux
+
+```bash
+bash scripts/install-netbeans.sh
 ```
 
-The script will stop and explain which tool is missing.
+The installer uses an existing NetBeans installation from common locations or downloads version 27 by default. Options use Linux-style names:
+
+```bash
+bash scripts/install-netbeans.sh --netbeans-download-version 28
+bash scripts/install-netbeans.sh --netbeans-home /opt/netbeans
+bash scripts/install-netbeans.sh --netbeans-home /opt/netbeans --netbeans-user-dir "$HOME/.netbeans/28"
+```
+
+Restart NetBeans after installation and open **Window → MariaDB Procedure Debugger**. The reusable `.nbm` is placed under `release/netbeans`.
+
+### Standalone application on Linux
+
+```bash
+bash scripts/install-standalone.sh
+```
+
+The Linux build automatically includes the Linux JavaFX libraries. Start it with:
+
+```bash
+"release/standalone/MariaDB Procedure Debugger.sh"
+```
+
+### Visual Studio Code on Linux
+
+```bash
+bash scripts/install-vscode.sh
+```
+
+The installer builds the extension and installs it into VS Code. If VS Code is missing, the installer uses the distribution package manager or an official Microsoft `.deb`/`.rpm` package where appropriate.
+
+To produce the `.vsix` without installing it:
+
+```bash
+bash scripts/install-vscode.sh --skip-extension-install
+```
+
+Add `--skip-tool-install` to any Linux installer to report missing tools without installing system packages.
 
 ## Using the debugger
 
@@ -145,44 +158,50 @@ The general workflow is the same in every frontend:
 
 1. Enter the MariaDB host, port, database, username, and password, then connect.
 2. Select a stored procedure or function.
-3. Add breakpoints on the lines where execution should pause.
-4. Start the debug session.
-5. Call the selected routine from another SQL client or application.
-6. When execution pauses, inspect variables and watches.
-7. Use Continue or Step to resume execution.
-8. Stop the debug session when finished.
+3. Add breakpoints and start debugging.
+4. Call the routine from another SQL client or application.
+5. Inspect variables and watches when execution pauses.
+6. Use Continue or Step to resume execution.
+7. Stop the debug session when finished.
 
-Use **Reset All Debug Changes** if an earlier session was interrupted or did not close normally.
+Use **Reset All Debug Changes** if an earlier session did not close normally.
 
 ## Build without installing
 
-The installation scripts are the simplest and recommended build method. They also produce reusable packages under `release`.
+The frontend installers are the recommended build method because they also check prerequisites and place reusable packages under `release`.
 
-To run only the shared tests:
+Run the shared tests on Windows:
 
 ```bat
 mvnw.cmd -pl core test
 ```
 
-To build the standalone application without running its installer:
+Run them on Linux:
 
-```bat
-mvnw.cmd -pl standalone -am clean package
+```bash
+bash mvnw -pl core test
 ```
 
-The executable JAR is created under `standalone\target`.
+Build the standalone application directly:
 
-To build the VS Code Java component and package the extension:
-
-```bat
-mvnw.cmd -pl vscode -am clean package
-cd vscode
-npm.cmd run package
+```text
+Windows: mvnw.cmd -pl standalone -am clean package
+Linux:   bash mvnw -pl standalone -am clean package
 ```
 
-The `.vsix` is created in the `vscode` folder. Return to the repository root with `cd ..`.
+Build and package the VS Code extension directly:
 
-For NetBeans, use `scripts\install-netbeans.cmd`. The script detects the chosen NetBeans version and prepares the matching build dependencies before creating the `.nbm`.
+```text
+Windows: mvnw.cmd -pl vscode -am clean package
+         cd vscode
+         npm.cmd run package
+
+Linux:   bash mvnw -pl vscode -am clean package
+         cd vscode
+         npm run package
+```
+
+Use the NetBeans installer for NetBeans builds because it detects the selected NetBeans release and prepares matching build dependencies.
 
 ## Project folders
 
@@ -191,6 +210,6 @@ core/        Shared debugger logic
 plugin/      Apache NetBeans frontend
 standalone/  JavaFX frontend
 vscode/      Visual Studio Code frontend
-scripts/     Build and installation scripts
+scripts/     Self-contained Windows and Linux installers
 release/     Packages produced by the installers
 ```
