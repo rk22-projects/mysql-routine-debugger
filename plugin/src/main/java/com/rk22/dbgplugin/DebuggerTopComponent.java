@@ -7,6 +7,8 @@ import org.openide.windows.TopComponent;
 import org.openide.windows.WindowManager;
 
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.event.*;
 import java.sql.*;
@@ -26,6 +28,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
     // ── Mode ──────────────────────────────────────────────────────────────────
     private final boolean isChild;
+    private DebuggerTopComponent parentDebugger;
 
     // ── DB state ──────────────────────────────────────────────────────────────
     private Connection          conn;
@@ -35,13 +38,15 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     private String              currentRoutine;
     private String              currentRoutineType;
     private boolean             debugActive = false;
+    private boolean             ownsConnection = false;
 
     /** Callees auto-deployed alongside the primary routine; restored when primary stops. */
     private final List<String[]> deployedCallees = new ArrayList<>();  // {name, type, sid}
 
     // ── UI ────────────────────────────────────────────────────────────────────
     private final JComboBox<RoutineInfo> routineCombo = new JComboBox<>();
-    private final JButton btnLoad    = new JButton("Load");
+    private final JButton btnConnect    = new JButton("Connect");
+    private final JButton btnDisconnect = new JButton("Disconnect");
     private final JButton btnDeploy  = new JButton("▶ Debug");
     private final JButton btnStop    = new JButton("■ Stop Debugging");
     private final JButton btnCont     = new JButton("▶ Continue  F5");
@@ -58,6 +63,8 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     // ── Watch state ───────────────────────────────────────────────────────────
     private final Map<String, String> watchPrev    = new HashMap<>();
     private final Set<String>         watchChanged = new HashSet<>();
+    private final List<RoutineInfo>    availableRoutines = new ArrayList<>();
+    private boolean                   filteringRoutines;
 
     // ── Singleton (root only) ─────────────────────────────────────────────────
 
@@ -88,8 +95,10 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     static DebuggerTopComponent createChildInstance(String routineName,
                                                      DbgConnection db,
                                                      Connection conn,
-                                                     String schema) {
+                                                     String schema,
+                                                     DebuggerTopComponent parent) {
         DebuggerTopComponent tc = new DebuggerTopComponent(true);
+        tc.parentDebugger = parent;
         tc.currentRoutine = routineName;
         tc.conn   = conn;
         tc.db     = db;
@@ -161,9 +170,11 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         btnPanel.setOpaque(false);
 
         routineCombo.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        routineCombo.setPreferredSize(new Dimension(200, 26));
+        routineCombo.setPreferredSize(new Dimension(240, 26));
+        routineCombo.setEditable(true);
 
-        style(btnLoad,   new Color(0xE0, 0xE0, 0xE0), Color.DARK_GRAY);
+        style(btnConnect,    new Color(0xE0, 0xE0, 0xE0), Color.DARK_GRAY);
+        style(btnDisconnect, new Color(0xE0, 0xE0, 0xE0), Color.DARK_GRAY);
         style(btnDeploy,   new Color(0x27, 0x67, 0x49), Color.WHITE);
         style(btnStop,     new Color(0xC0, 0x39, 0x2B), Color.WHITE);
         style(btnCont,     new Color(0x0E, 0x63, 0x9C), Color.WHITE);
@@ -175,9 +186,12 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         btnCont.setEnabled(false);
         btnStep.setEnabled(false);
         btnStepInto.setEnabled(false);
+        btnDisconnect.setVisible(false);
+        routineCombo.setEnabled(false);
 
+        btnPanel.add(btnConnect);
+        btnPanel.add(btnDisconnect);
         btnPanel.add(routineCombo);
-        btnPanel.add(btnLoad);
         btnPanel.add(btnDeploy);
         btnPanel.add(btnStop);
         btnPanel.add(Box.createHorizontalStrut(12));
@@ -246,7 +260,10 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
         logPanel.setOnClear(this::clearLog);
 
-        watchPanel.setOnAdd(name -> watchPrev.putIfAbsent(name, null));
+        watchPanel.setOnAdd(name -> {
+            watchPrev.putIfAbsent(name, null);
+            if (watchPrev.get(name) != null) watchPanel.updateValue(name, watchPrev.get(name), false);
+        });
         watchPanel.setOnRemove(name -> { watchPrev.remove(name); watchChanged.remove(name); });
         watchPanel.setOnToggleAll(() -> {
             if (!watchPanel.isWatchAll()) return;
@@ -262,10 +279,16 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
             try { db.saveBreakpoints(currentRoutine, sourcePanel.getBreakpoints()); }
             catch (DbgException ex) { LOG.log(Level.WARNING, "bp save failed", ex); }
         });
-        sourcePanel.setOnAddWatch(watchPanel::addVariable);
+        sourcePanel.setOnAddWatch(name -> {
+            watchPanel.addVariable(name);
+            watchPrev.putIfAbsent(name, null);
+            if (watchPrev.get(name) != null) watchPanel.updateValue(name, watchPrev.get(name), false);
+        });
 
         if (!isChild) {
-            btnLoad.addActionListener(e      -> loadRoutine());
+            btnConnect.addActionListener(e   -> promptConnect());
+            btnDisconnect.addActionListener(e -> disconnect());
+            installRoutineSearch();
             btnDeploy.addActionListener(e    -> deployDebug());
             btnStop.addActionListener(e      -> stopDebugging());
             btnStep.addActionListener(e      -> doStepOver());
@@ -280,11 +303,15 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
             if (evt.getID() != KeyEvent.KEY_PRESSED) return false;
             if (!isShowing()) return false;
             if (WindowManager.getDefault().getRegistry().getActivated() != this) return false;
+            if (evt.getKeyCode() == KeyEvent.VK_F9) {
+                sourcePanel.toggleBreakpointAtCaret();
+                return true;
+            }
             if (session == null || !session.isPaused()) return false;
             if (evt.getKeyCode() == KeyEvent.VK_F5) { doContinue(); return true; }
             if (!isChild) {
                 if (evt.getKeyCode() == KeyEvent.VK_F8) { doStepOver(); return true; }
-                if (evt.getKeyCode() == KeyEvent.VK_F7) { doStepInto(); return true; }
+                if (evt.getKeyCode() == KeyEvent.VK_F7 && !evt.isControlDown()) { doStepInto(); return true; }
             } else {
                 if (evt.getKeyCode() == KeyEvent.VK_F8) { doStep();    return true; }
                 if (evt.getKeyCode() == KeyEvent.VK_F7 && evt.isControlDown()) { doStepOut(); return true; }
@@ -295,16 +322,88 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
     // ── Connection management ─────────────────────────────────────────────────
 
+    @Override
+    protected void componentOpened() {
+        if (!isChild && db == null) SwingUtilities.invokeLater(() -> {
+            if (db == null && isShowing()) promptConnect();
+        });
+    }
+
+    private void installRoutineSearch() {
+        JTextField editor = (JTextField) routineCombo.getEditor().getEditorComponent();
+        editor.setToolTipText("Type to filter procedures and functions");
+        editor.getDocument().addDocumentListener(new DocumentListener() {
+            private void changed() {
+                if (!filteringRoutines) SwingUtilities.invokeLater(() -> filterRoutineChoices(editor.getText()));
+            }
+            @Override public void insertUpdate(DocumentEvent e) { changed(); }
+            @Override public void removeUpdate(DocumentEvent e) { changed(); }
+            @Override public void changedUpdate(DocumentEvent e) { changed(); }
+        });
+        routineCombo.addActionListener(e -> {
+            if (filteringRoutines || debugActive) return;
+            Object selected = routineCombo.getSelectedItem();
+            if (selected instanceof RoutineInfo ri &&
+                (!ri.name.equals(currentRoutine) || sourcePanel.getSourceText().isEmpty())) loadRoutine();
+        });
+    }
+
+    private void setAvailableRoutines(List<RoutineInfo> routines) {
+        availableRoutines.clear();
+        availableRoutines.addAll(routines);
+        currentRoutine = null;
+        currentRoutineType = null;
+        filteringRoutines = true;
+        routineCombo.removeAllItems();
+        routines.forEach(routineCombo::addItem);
+        routineCombo.setSelectedItem(null);
+        routineCombo.getEditor().setItem("");
+        filteringRoutines = false;
+    }
+
+    private void filterRoutineChoices(String text) {
+        if (filteringRoutines || !routineCombo.isEnabled()) return;
+        String query = text == null ? "" : text;
+        String needle = query.toLowerCase(Locale.ROOT);
+        filteringRoutines = true;
+        routineCombo.removeAllItems();
+        availableRoutines.stream()
+            .filter(r -> needle.isBlank() || r.name.toLowerCase(Locale.ROOT).contains(needle) ||
+                         r.type.toLowerCase(Locale.ROOT).contains(needle))
+            .forEach(routineCombo::addItem);
+        routineCombo.getEditor().setItem(query);
+        filteringRoutines = false;
+        if (routineCombo.isFocusOwner() || routineCombo.getEditor().getEditorComponent().isFocusOwner()) {
+            routineCombo.setPopupVisible(routineCombo.getItemCount() > 0);
+        }
+    }
+
     /** Called by DeployAction with a DatabaseConnection from the DB Browser. */
     public void initFromDbConnection(DatabaseConnection dbConn, String routineName) {
+        if (debugActive) { showError("Stop the active debug session before changing the connection."); return; }
+        Connection previousConn = conn;
+        boolean previousOwned = ownsConnection;
+        Connection controlConn = null;
         try {
-            conn = dbConn.getJDBCConnection();
-            conn.setAutoCommit(true);
-            schema = dbConn.getSchema();
-            if (schema == null || schema.isBlank())
-                schema = dbConn.getDatabaseURL().replaceAll(".*/","").replaceAll("\\?.*","");
-            db = new DbgConnection(conn);
+            String newSchema = dbConn.getSchema();
+            if (newSchema == null || newSchema.isBlank())
+                newSchema = dbConn.getDatabaseURL().replaceAll(".*/","").replaceAll("\\?.*","");
+
+            controlConn = openDedicatedControlConnection(dbConn);
+            controlConn.setAutoCommit(true);
+            if (newSchema != null && !newSchema.isBlank()) controlConn.setCatalog(newSchema);
+
+            conn = controlConn;
+            schema = newSchema;
+            db = new DbgConnection(controlConn);
+            ownsConnection = true;
+            if (previousOwned && previousConn != null && previousConn != controlConn) {
+                try { previousConn.close(); } catch (SQLException ignored) {}
+            }
         } catch (Exception ex) {
+            if (controlConn != null) {
+                try { controlConn.close(); } catch (SQLException ignored) {}
+            }
             showError("Connection failed: " + ex.getMessage());
             return;
         }
@@ -314,14 +413,13 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
                 db.setupInfrastructure();
                 List<RoutineInfo> routines = db.fetchRoutines(schema);
                 SwingUtilities.invokeLater(() -> {
-                    routineCombo.removeAllItems();
-                    routines.forEach(routineCombo::addItem);
+                    setAvailableRoutines(routines);
                     setStatus("Connected to " + schema, false);
+                    setDebugActive(false);
                     if (routineName != null) {
                         for (int i = 0; i < routineCombo.getItemCount(); i++) {
                             if (routineCombo.getItemAt(i).name.equals(routineName)) {
                                 routineCombo.setSelectedIndex(i);
-                                loadRoutine();
                                 break;
                             }
                         }
@@ -355,6 +453,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
             conn.setAutoCommit(true);
             schema = dbF.getText().trim();
             db     = new DbgConnection(conn);
+            ownsConnection = true;
         } catch (Exception ex) {
             showError("Connection failed: " + ex.getMessage());
             return;
@@ -365,8 +464,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
                 db.setupInfrastructure();
                 List<RoutineInfo> routines = db.fetchRoutines(schema);
                 SwingUtilities.invokeLater(() -> {
-                    routineCombo.removeAllItems();
-                    routines.forEach(routineCombo::addItem);
+                    setAvailableRoutines(routines);
                     setDebugActive(false);
                     setStatus("Connected to " + schema, false);
                 });
@@ -374,6 +472,53 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
                 SwingUtilities.invokeLater(() -> showError("Connection failed: " + ex.getMessage()));
             }
         });
+    }
+
+    /**
+     * Opens a private debugger/control session from a NetBeans DB Explorer
+     * connection.  Reusing getJDBCConnection() would deadlock as soon as the SQL
+     * editor executes a routine that pauses: that physical connection is then
+     * occupied by CALL and cannot also poll or update _dbg_state.
+     */
+    private static Connection openDedicatedControlConnection(DatabaseConnection dbConn)
+            throws Exception {
+        String url = dbConn.getDatabaseURL();
+        if (url.startsWith("jdbc:mariadb:")) {
+            Class.forName("org.mariadb.jdbc.Driver");
+        } else if (url.startsWith("jdbc:mysql:")) {
+            Class.forName("com.mysql.cj.jdbc.Driver");
+        } else if (dbConn.getDriverClass() != null && !dbConn.getDriverClass().isBlank()) {
+            Class.forName(dbConn.getDriverClass());
+        }
+
+        Properties properties = dbConn.getConnectionProperties();
+        if (properties == null) properties = new Properties();
+        String user = dbConn.getUser();
+        String password = dbConn.getPassword();
+        if (user != null) properties.setProperty("user", user);
+        if (password != null) properties.setProperty("password", password);
+        return DriverManager.getConnection(url, properties);
+    }
+
+    private void disconnect() {
+        if (debugActive) {
+            showError("Stop the active debug session before disconnecting.");
+            return;
+        }
+        stopSession();
+        try { if (ownsConnection && conn != null) conn.close(); } catch (SQLException ignored) {}
+        conn = null; db = null; schema = null;
+        ownsConnection = false;
+        availableRoutines.clear();
+        filteringRoutines = true;
+        routineCombo.removeAllItems();
+        routineCombo.getEditor().setItem("");
+        filteringRoutines = false;
+        currentRoutine = null; currentRoutineType = null;
+        sourcePanel.setSource(null); logPanel.clear(); watchPanel.clearValues();
+        watchPrev.clear(); watchChanged.clear(); hideBanner();
+        setDebugActive(false);
+        setStatus("Disconnected", false);
     }
 
     // ── Routine loading ───────────────────────────────────────────────────────
@@ -619,10 +764,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
                 db.setupInfrastructure();
                 List<RoutineInfo> routines = db.fetchRoutines(currentSchema);
                 SwingUtilities.invokeLater(() -> {
-                    routineCombo.removeAllItems();
-                    routines.forEach(routineCombo::addItem);
-                    currentRoutine = null;
-                    currentRoutineType = null;
+                    setAvailableRoutines(routines);
                     sourcePanel.setSource(null);
                     setDebugActive(false);
                     setStatus("All debug changes reverted.", false);
@@ -740,11 +882,6 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     private void clearLog() {
         if (session != null) session.clearLog();
         logPanel.clear();
-        watchPanel.clearValues();
-        watchPrev.clear();
-        watchChanged.clear();
-        setPaused(false);
-        setStatus("Log cleared", false);
     }
 
     private void setDebugActive(boolean active) {
@@ -752,6 +889,10 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         if (!isChild) {
             btnDeploy.setEnabled(!active && db != null);
             btnStop.setEnabled(active);
+            btnConnect.setVisible(db == null);
+            btnDisconnect.setVisible(db != null);
+            btnDisconnect.setEnabled(!active && db != null);
+            routineCombo.setEnabled(!active && db != null);
         }
     }
 
@@ -796,6 +937,17 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     }
 
     @Override
+    public void onCompleted() {
+        setPaused(false);
+        sourcePanel.clearCurrentLine();
+        setStatus("Routine completed", false);
+        if (isChild) {
+            close();
+            if (parentDebugger != null) parentDebugger.requestActive();
+        }
+    }
+
+    @Override
     public void onError(String message) {
         LOG.warning("[dbg] " + message);
     }
@@ -803,7 +955,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     @Override
     public void onCalleeStarted(String routineName, String sessionId) {
         // Already on the EDT (dispatched by SwingUtilities::invokeLater in DebugSession.poll)
-        DebuggerTopComponent child = createChildInstance(routineName, db, conn, schema);
+        DebuggerTopComponent child = createChildInstance(routineName, db, conn, schema, this);
 
         Mode m = WindowManager.getDefault().findMode("editor");
         if (m != null) m.dockInto(child);

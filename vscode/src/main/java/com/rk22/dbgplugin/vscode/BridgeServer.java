@@ -3,6 +3,7 @@ package com.rk22.dbgplugin.vscode;
 import com.rk22.dbgplugin.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.io.*;
@@ -19,6 +20,10 @@ public final class BridgeServer implements AutoCloseable {
     private Connection connection;
     private DbgConnection db;
     private String schema;
+    private DeployedRoutine deployedRoot;
+    private final List<DeployedRoutine> deployedCallees = new ArrayList<>();
+
+    private record DeployedRoutine(String name, String type, String sessionId) {}
 
     public static void main(String[] args) throws Exception {
         try (BridgeServer server = new BridgeServer();
@@ -61,11 +66,12 @@ public final class BridgeServer implements AutoCloseable {
             case "load" -> load(text(p, "name"), text(p, "type"));
             case "deploy" -> deploy(text(p, "name"), text(p, "type"));
             case "stop" -> stop(text(p, "name"), text(p, "type"));
-            case "poll" -> json.valueToTree(requireDb().pollLog(text(p, "sessionId"), p.path("sinceId").asLong()));
+            case "poll" -> poll(p);
             case "continue" -> { requireDb().updateState(text(p, "sessionId"), "continue"); yield json.nullNode(); }
             case "step" -> { requireDb().updateState(text(p, "sessionId"), "step"); yield json.nullNode(); }
+            case "setSessionStates" -> setSessionStates(p);
             case "saveBreakpoints" -> saveBreakpoints(p);
-            case "clearLog" -> { requireDb().clearLog(text(p, "sessionId")); yield json.nullNode(); }
+            case "clearLogs" -> clearLogs(p);
             case "reset" -> reset();
             case "disconnect" -> { close(); yield json.nullNode(); }
             case "shutdown" -> { close(); ObjectNode n = json.createObjectNode(); n.put("shutdown", true); yield n; }
@@ -105,8 +111,39 @@ public final class BridgeServer implements AutoCloseable {
 
     private JsonNode deploy(String name, String type) throws Exception {
         DbgConnection dbc = requireDb();
+        deployedCallees.clear();
         String sessionId = UUID.randomUUID().toString();
         String original = dbc.fetchRoutineDdl(name, type);
+        deployRoutine(name, type, original, sessionId, "running");
+        deployedRoot = new DeployedRoutine(name, type, sessionId);
+
+        ArrayNode callees = json.createArrayNode();
+        for (String calleeName : InstrumentEngine.findCallees(original)) {
+            if (dbc.isDeployed(calleeName)) continue;
+            String calleeType = findRoutineType(calleeName);
+            if (calleeType == null) continue;
+            String calleeSessionId = UUID.randomUUID().toString();
+            String calleeDdl = dbc.fetchRoutineDdl(calleeName, calleeType);
+            deployRoutine(calleeName, calleeType, calleeDdl, calleeSessionId, "running");
+            deployedCallees.add(new DeployedRoutine(calleeName, calleeType, calleeSessionId));
+
+            ObjectNode item = callees.addObject();
+            item.put("name", calleeName);
+            item.put("type", calleeType);
+            item.put("sessionId", calleeSessionId);
+            item.put("ddl", calleeDdl);
+            item.set("breakpoints", json.valueToTree(dbc.loadBreakpoints(calleeName)));
+        }
+
+        ObjectNode result = json.createObjectNode();
+        result.put("sessionId", sessionId);
+        result.set("callees", callees);
+        return result;
+    }
+
+    private void deployRoutine(String name, String type, String original, String sessionId,
+                               String initialStatus) throws Exception {
+        DbgConnection dbc = requireDb();
         String instrumented = InstrumentEngine.instrumentAuto(name, original, sessionId, connection, schema);
         String originalCopy = InstrumentEngine.buildOrigCopy(name, original);
 
@@ -139,22 +176,78 @@ public final class BridgeServer implements AutoCloseable {
         String proxy = InstrumentEngine.buildProxy(name, type, names, types, modes,
                 returnType == null ? "VARCHAR(255)" : returnType, deterministic, sessionId);
         dbc.deployDebug(name, type, original, originalCopy, instrumented, proxy, sessionId);
-        dbc.initSessionState(sessionId, name);
-        ObjectNode result = json.createObjectNode();
-        result.put("sessionId", sessionId);
-        return result;
+        dbc.initSessionState(sessionId, name, initialStatus);
     }
 
     private JsonNode stop(String name, String type) throws Exception {
         DbgConnection dbc = requireDb();
-        String sid = dbc.loadSessionId(name);
-        if (sid != null) dbc.updateState(sid, "continue");
-        String original = dbc.loadOriginalDdl(name);
-        if (original == null) throw new IllegalStateException("No saved original found for " + name);
-        dbc.restoreOriginal(name, type, original);
+        if (deployedRoot == null) deployedRoot = new DeployedRoutine(name, type, dbc.loadSessionId(name));
+        restoreDeployment();
         ObjectNode result = json.createObjectNode();
         result.put("ddl", dbc.fetchRoutineDdl(name, type));
         return result;
+    }
+
+    private void restoreDeployment() throws DbgException {
+        if (deployedRoot == null) return;
+        DbgConnection dbc = requireDb();
+
+        if (deployedRoot.sessionId() != null) dbc.updateState(deployedRoot.sessionId(), "continue");
+        for (DeployedRoutine callee : deployedCallees) {
+            if (callee.sessionId() != null) dbc.updateState(callee.sessionId(), "continue");
+        }
+        for (DeployedRoutine callee : deployedCallees) {
+            String calleeOriginal = dbc.loadOriginalDdl(callee.name());
+            if (calleeOriginal != null) dbc.restoreOriginal(callee.name(), callee.type(), calleeOriginal);
+        }
+        String original = dbc.loadOriginalDdl(deployedRoot.name());
+        if (original == null) throw new DbgException("No saved original found for " + deployedRoot.name());
+        dbc.restoreOriginal(deployedRoot.name(), deployedRoot.type(), original);
+
+        deployedRoot = null;
+        deployedCallees.clear();
+    }
+
+    private JsonNode poll(JsonNode p) throws Exception {
+        ArrayNode results = json.createArrayNode();
+        for (JsonNode session : p.path("sessions")) {
+            String sessionId = text(session, "sessionId");
+            PollResult polled = requireDb().pollLog(sessionId, session.path("sinceId").asLong());
+            ObjectNode item = json.valueToTree(polled);
+            item.put("sessionId", sessionId);
+            item.put("name", session.path("name").asText());
+            results.add(item);
+        }
+        ObjectNode result = json.createObjectNode();
+        result.set("sessions", results);
+        return result;
+    }
+
+    private JsonNode setSessionStates(JsonNode p) throws Exception {
+        String status = text(p, "status");
+        for (JsonNode session : p.path("sessions")) {
+            requireDb().initSessionState(text(session, "sessionId"), session.path("name").asText(), status);
+        }
+        return json.nullNode();
+    }
+
+    private JsonNode clearLogs(JsonNode p) throws Exception {
+        for (JsonNode session : p.path("sessions")) {
+            requireDb().clearLog(text(session, "sessionId"));
+        }
+        return json.nullNode();
+    }
+
+    private String findRoutineType(String name) throws SQLException {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT ROUTINE_TYPE FROM information_schema.ROUTINES " +
+                "WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
+            ps.setString(1, schema);
+            ps.setString(2, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next() ? rs.getString(1) : null;
+            }
+        }
     }
 
     private JsonNode saveBreakpoints(JsonNode p) throws Exception {
@@ -168,6 +261,8 @@ public final class BridgeServer implements AutoCloseable {
         DbgConnection dbc = requireDb();
         dbc.restoreAll(schema);
         dbc.setupInfrastructure();
+        deployedRoot = null;
+        deployedCallees.clear();
         ObjectNode result = json.createObjectNode();
         result.set("routines", json.valueToTree(dbc.fetchRoutines(schema)));
         return result;
@@ -191,8 +286,14 @@ public final class BridgeServer implements AutoCloseable {
     }
 
     @Override public void close() throws SQLException {
+        if (db != null && deployedRoot != null) {
+            try { restoreDeployment(); }
+            catch (Exception ignored) {}
+        }
         db = null;
         schema = null;
+        deployedRoot = null;
+        deployedCallees.clear();
         if (connection != null) {
             try { connection.close(); } finally { connection = null; }
         }

@@ -118,6 +118,18 @@ public class SourcePanel extends JPanel {
     }
 
     public Set<String> getBreakpoints() { return Collections.unmodifiableSet(breakpoints); }
+    public String getSourceText() {
+        try { return doc.getText(0, doc.getLength()); }
+        catch (BadLocationException ex) { return ""; }
+    }
+
+    /** Toggle the executable source line containing the caret (F9). */
+    public void toggleBreakpointAtCaret() {
+        int offset = Math.max(0, textPane.getCaretPosition());
+        Element root = doc.getDefaultRootElement();
+        int line = root.getElementIndex(offset) + 1;
+        if (isExecutable(line - 1)) gutterClicked(line);
+    }
 
     public void setCurrentLine(int lineNumber) {
         currentLine = lineNumber;

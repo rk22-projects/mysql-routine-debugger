@@ -44,6 +44,7 @@ public class SqlHighlighter {
     private static final Color C_COMMENT = new Color(0x00, 0x80, 0x00);
     private static final Color C_NUMBER  = new Color(0x09, 0x86, 0x58);
     private static final Color C_IDENT   = new Color(0x26, 0x7F, 0x99);
+    private static final Color C_VAR     = new Color(0x00, 0x70, 0xC1);
 
     private final SimpleAttributeSet aDefault = style(C_DEFAULT, false);
     private final SimpleAttributeSet aKeyword = style(C_KEYWORD, true);
@@ -52,6 +53,7 @@ public class SqlHighlighter {
     private final SimpleAttributeSet aComment = style(C_COMMENT, false);
     private final SimpleAttributeSet aNumber  = style(C_NUMBER, false);
     private final SimpleAttributeSet aIdent   = style(C_IDENT, false);
+    private final SimpleAttributeSet aVar     = style(C_VAR, false);
 
     private static SimpleAttributeSet style(Color c, boolean bold) {
         SimpleAttributeSet a = new SimpleAttributeSet();
@@ -83,7 +85,8 @@ public class SqlHighlighter {
             }
 
             // line comment
-            if ((c == '-' && i + 1 < len && text.charAt(i + 1) == '-') || c == '#') {
+            if ((c == '-' && i + 1 < len && text.charAt(i + 1) == '-' &&
+                 (i + 2 == len || Character.isWhitespace(text.charAt(i + 2)))) || c == '#') {
                 int eol = text.indexOf('\n', i);
                 int end = eol < 0 ? len : eol;
                 doc.setCharacterAttributes(i, end - i, aComment, true);
@@ -99,10 +102,14 @@ public class SqlHighlighter {
             }
 
             // string literal
-            if (c == '\'') {
+            if (c == '\'' || c == '"') {
                 int j = i + 1;
                 while (j < len) {
-                    if (text.charAt(j) == '\'' && (j == 0 || text.charAt(j - 1) != '\\')) { j++; break; }
+                    if (text.charAt(j) == '\\') { j += 2; continue; }
+                    if (text.charAt(j) == c) {
+                        if (j + 1 < len && text.charAt(j + 1) == c) { j += 2; continue; }
+                        j++; break;
+                    }
                     j++;
                 }
                 doc.setCharacterAttributes(i, j - i, aString, true);
@@ -112,16 +119,28 @@ public class SqlHighlighter {
             // backtick identifier
             if (c == '`') {
                 int j = i + 1;
-                while (j < len && text.charAt(j) != '`') j++;
-                j++;
+                while (j < len) {
+                    if (text.charAt(j) == '`' && j + 1 < len && text.charAt(j + 1) == '`') { j += 2; continue; }
+                    if (text.charAt(j) == '`') { j++; break; }
+                    j++;
+                }
                 doc.setCharacterAttributes(i, Math.min(j, len) - i, aIdent, true);
+                i = j; continue;
+            }
+
+            // MySQL user and system variables
+            if (c == '@') {
+                int j = i + 1;
+                if (j < len && text.charAt(j) == '@') j++;
+                while (j < len && (Character.isLetterOrDigit(text.charAt(j)) || "_$".indexOf(text.charAt(j)) >= 0)) j++;
+                doc.setCharacterAttributes(i, j - i, aVar, true);
                 i = j; continue;
             }
 
             // number
             if (Character.isDigit(c) && (i == 0 || !Character.isLetterOrDigit(text.charAt(i - 1)))) {
                 int j = i;
-                while (j < len && "0123456789.eExX".indexOf(text.charAt(j)) >= 0) j++;
+                while (j < len && "0123456789.eExXbBabcdefABCDEF".indexOf(text.charAt(j)) >= 0) j++;
                 doc.setCharacterAttributes(i, j - i, aNumber, true);
                 i = j; continue;
             }

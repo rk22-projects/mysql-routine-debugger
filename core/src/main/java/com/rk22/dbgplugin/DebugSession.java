@@ -16,6 +16,7 @@ public class DebugSession {
 
     private volatile long    lastId   = 0;
     private volatile boolean paused   = false;
+    private volatile String  lastStatus;
 
     private ScheduledExecutorService         poller;
     private DebugEventListener               listener;
@@ -77,7 +78,7 @@ public class DebugSession {
     }
 
     public void clearLog() {
-        try { db.clearLog(sessionId); lastId = 0; paused = false; }
+        try { db.clearLog(sessionId); lastId = 0; }
         catch (DbgException e) { fireError(e.getMessage()); }
     }
 
@@ -86,6 +87,10 @@ public class DebugSession {
     private void poll() {
         try {
             PollResult result = db.pollLog(sessionId, lastId);
+
+            boolean newlyCompleted = "completed".equals(result.status)
+                    && !"completed".equals(lastStatus);
+            lastStatus = result.status;
 
             if (!result.entries.isEmpty()) {
                 long maxId = result.entries.stream().mapToLong(e -> e.id).max().orElse(lastId);
@@ -102,6 +107,13 @@ public class DebugSession {
             } else if (!result.paused && paused) {
                 paused = false;
                 uiExecutor.execute(listener::onResumed);
+            }
+
+            // Queue completion after the final log and resume events.  UI executors
+            // preserve submission order, so child debugger windows receive their
+            // last output before they close and return focus to their parent.
+            if (newlyCompleted) {
+                uiExecutor.execute(listener::onCompleted);
             }
             // Check for deployed callees that have started and hit their first checkpoint
             if (!pendingChildren.isEmpty()) {

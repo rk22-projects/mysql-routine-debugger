@@ -317,13 +317,19 @@ public class InstrumentEngine {
                    (deterministic ? "DETERMINISTIC\n" : "NOT DETERMINISTIC\n") +
                    "SQL SECURITY INVOKER\n" +
                    "BEGIN\n" +
-                   "  RETURN `_dbg_" + name + "`(" + args + ");\n" +
+                   "  DECLARE v_dbg_result " + returnType + ";\n" +
+                   "  UPDATE _dbg_state SET status = IF(status = 'completed', 'running', status) WHERE session_id = '" + sessionId + "';\n" +
+                   "  SET v_dbg_result = `_dbg_" + name + "`(" + args + ");\n" +
+                   "  UPDATE _dbg_state SET status = 'completed' WHERE session_id = '" + sessionId + "';\n" +
+                   "  RETURN v_dbg_result;\n" +
                    "END";
         } else {
             return "CREATE PROCEDURE `" + name + "`(" + params + ")\n" +
                    "SQL SECURITY INVOKER\n" +
                    "BEGIN\n" +
+                   "  UPDATE _dbg_state SET status = IF(status = 'completed', 'running', status) WHERE session_id = '" + sessionId + "';\n" +
                    "  CALL `_dbg_" + name + "`(" + args + ");\n" +
+                   "  UPDATE _dbg_state SET status = 'completed' WHERE session_id = '" + sessionId + "';\n" +
                    "END";
         }
     }

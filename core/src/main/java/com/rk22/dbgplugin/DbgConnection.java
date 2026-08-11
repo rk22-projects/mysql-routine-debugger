@@ -74,11 +74,13 @@ public class DbgConnection {
         "  DECLARE v_is_bp  INT DEFAULT 0;\n" +
         "  DECLARE v_status VARCHAR(50) DEFAULT 'running';\n" +
         "\n" +
-        "  SELECT status INTO v_status FROM _dbg_state WHERE session_id = p_session;\n" +
+        "  SELECT status INTO v_status FROM _dbg_state\n" +
+        "  WHERE CAST(session_id AS BINARY) = CAST(p_session AS BINARY);\n" +
         "\n" +
         "  SELECT COUNT(*) INTO v_is_bp\n" +
         "  FROM _dbg_breakpoints\n" +
-        "  WHERE routine_name = p_routine AND label = p_label;\n" +
+        "  WHERE CAST(routine_name AS BINARY) = CAST(p_routine AS BINARY)\n" +
+        "    AND CAST(label AS BINARY) = CAST(p_label AS BINARY);\n" +
         "\n" +
         "  IF v_is_bp > 0 OR v_status = 'step' THEN\n" +
         "    INSERT INTO _dbg_state (session_id, routine_name, status)\n" +
@@ -98,11 +100,13 @@ public class DbgConnection {
         "      -- COMMIT ends the current MVCC snapshot so the next SELECT reads the\n" +
         "      -- latest committed row written by the plugin (e.g. 'continue'/'step').\n" +
         "      COMMIT;\n" +
-        "      SELECT status INTO v_status FROM _dbg_state WHERE session_id = p_session;\n" +
+        "      SELECT status INTO v_status FROM _dbg_state\n" +
+        "      WHERE CAST(session_id AS BINARY) = CAST(p_session AS BINARY);\n" +
         "    END WHILE;\n" +
         "\n" +
         "    IF v_status = 'continue' THEN\n" +
-        "      UPDATE _dbg_state SET status = 'running' WHERE session_id = p_session;\n" +
+        "      UPDATE _dbg_state SET status = 'running'\n" +
+        "      WHERE CAST(session_id AS BINARY) = CAST(p_session AS BINARY);\n" +
         "    END IF;\n" +
         "  END IF;\n" +
         "END"
@@ -352,11 +356,15 @@ public class DbgConnection {
             }
             boolean paused   = false;
             String  pausedAt = null;
+            String  status   = null;
             try (PreparedStatement ps = conn.prepareStatement(
                     "SELECT status, routine_name FROM _dbg_state WHERE session_id = ?")) {
                 ps.setString(1, sessionId);
                 ResultSet rs = ps.executeQuery();
-                if (rs.next()) paused = "paused".equals(rs.getString(1));
+                if (rs.next()) {
+                    status = rs.getString(1);
+                    paused = "paused".equals(status);
+                }
             }
             if (paused) {
                 String bpSql =
@@ -369,7 +377,7 @@ public class DbgConnection {
                     if (rs.next()) pausedAt = rs.getString(1);
                 }
             }
-            return new PollResult(entries, paused, pausedAt);
+            return new PollResult(entries, paused, pausedAt, status);
         } catch (SQLException e) {
             throw new DbgException("Poll failed: " + e.getMessage(), e);
         }
