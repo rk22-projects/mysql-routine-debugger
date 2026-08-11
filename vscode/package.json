@@ -1,0 +1,85 @@
+{
+  "name": "mariadb-procedure-debugger",
+  "displayName": "MariaDB Procedure Debugger",
+  "description": "Debug MariaDB stored procedures and functions with breakpoints, stepping, watches, and execution logs.",
+  "version": "1.1.1",
+  "publisher": "rk22",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": ["Debuggers", "Other"],
+  "keywords": ["mariadb", "mysql", "stored procedure", "debugger"],
+  "activationEvents": [
+    "onView:mariaDbDebugger.routines",
+    "onCommand:mariaDbDebugger.open",
+    "onCommand:mariaDbDebugger.connect"
+  ],
+  "main": "./extension.js",
+  "scripts": {
+    "check": "node --check extension.js",
+    "package": "npx --yes @vscode/vsce package --no-dependencies"
+  },
+  "contributes": {
+    "commands": [
+      { "command": "mariaDbDebugger.open", "title": "MariaDB Debugger: Open Debugger", "icon": "$(debug-console)" },
+      { "command": "mariaDbDebugger.connect", "title": "MariaDB Debugger: Connect", "icon": "$(plug)" },
+      { "command": "mariaDbDebugger.disconnect", "title": "MariaDB Debugger: Disconnect" },
+      { "command": "mariaDbDebugger.refresh", "title": "MariaDB Debugger: Refresh Routines", "icon": "$(refresh)" },
+      { "command": "mariaDbDebugger.load", "title": "MariaDB Debugger: Open Routine" },
+      { "command": "mariaDbDebugger.deploy", "title": "MariaDB Debugger: Start Debugging", "icon": "$(debug-start)" },
+      { "command": "mariaDbDebugger.stop", "title": "MariaDB Debugger: Stop Debugging", "icon": "$(debug-stop)" },
+      { "command": "mariaDbDebugger.continue", "title": "MariaDB Debugger: Continue", "icon": "$(debug-continue)" },
+      { "command": "mariaDbDebugger.step", "title": "MariaDB Debugger: Step Over", "icon": "$(debug-step-over)" },
+      { "command": "mariaDbDebugger.toggleBreakpoint", "title": "MariaDB Debugger: Toggle Breakpoint" },
+      { "command": "mariaDbDebugger.addWatch", "title": "MariaDB Debugger: Add Watch", "icon": "$(add)" },
+      { "command": "mariaDbDebugger.removeWatch", "title": "MariaDB Debugger: Remove Watch" },
+      { "command": "mariaDbDebugger.clearLog", "title": "MariaDB Debugger: Clear Log", "icon": "$(clear-all)" },
+      { "command": "mariaDbDebugger.reset", "title": "MariaDB Debugger: Reset All Debug Changes" }
+    ],
+    "viewsContainers": {
+      "activitybar": [{
+        "id": "mariaDbDebugger",
+        "title": "MariaDB Debugger",
+        "icon": "resources/database-debug.svg"
+      }]
+    },
+    "views": {
+      "mariaDbDebugger": [
+        { "id": "mariaDbDebugger.routines", "name": "Routines" }
+      ]
+    },
+    "viewsWelcome": [
+      { "view": "mariaDbDebugger.routines", "contents": "Open the unified debugger to connect, inspect source, and control execution.\n[Open Debugger](command:mariaDbDebugger.open)" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "mariaDbDebugger.open", "when": "view == mariaDbDebugger.routines", "group": "navigation@1" },
+        { "command": "mariaDbDebugger.connect", "when": "view == mariaDbDebugger.routines && !mariaDbDebugger.connected", "group": "navigation" },
+        { "command": "mariaDbDebugger.refresh", "when": "view == mariaDbDebugger.routines && mariaDbDebugger.connected", "group": "navigation" },
+        { "command": "mariaDbDebugger.deploy", "when": "view == mariaDbDebugger.routines && mariaDbDebugger.loaded && !mariaDbDebugger.active", "group": "navigation" },
+        { "command": "mariaDbDebugger.stop", "when": "view == mariaDbDebugger.routines && mariaDbDebugger.active", "group": "navigation" }
+      ],
+      "commandPalette": [
+        { "command": "mariaDbDebugger.continue", "when": "mariaDbDebugger.paused" },
+        { "command": "mariaDbDebugger.step", "when": "mariaDbDebugger.paused" }
+      ]
+    },
+    "keybindings": [
+      { "command": "mariaDbDebugger.continue", "key": "f5", "when": "mariaDbDebugger.paused" },
+      { "command": "mariaDbDebugger.step", "key": "f8", "when": "mariaDbDebugger.paused" },
+      { "command": "mariaDbDebugger.toggleBreakpoint", "key": "f9", "when": "activeWebviewPanelId == mariaDbDebugger.panel" }
+    ],
+    "configuration": {
+      "title": "MariaDB Procedure Debugger",
+      "properties": {
+        "mariaDbDebugger.host": { "type": "string", "default": "localhost", "description": "MariaDB server hostname." },
+        "mariaDbDebugger.port": { "type": "number", "default": 3306, "description": "MariaDB server port." },
+        "mariaDbDebugger.user": { "type": "string", "default": "", "description": "MariaDB user. Passwords are kept in VS Code secret storage." },
+        "mariaDbDebugger.database": { "type": "string", "default": "", "description": "Database/schema containing the routines." },
+        "mariaDbDebugger.javaPath": { "type": "string", "default": "java", "description": "Optional Java 17+ executable override. The extension automatically discovers Java by default." },
+        "mariaDbDebugger.pollInterval": { "type": "number", "default": 600, "minimum": 200, "description": "Debug-state polling interval in milliseconds." }
+      }
+    }
+  }
+}
