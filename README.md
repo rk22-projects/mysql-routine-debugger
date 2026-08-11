@@ -6,11 +6,11 @@ Debug MySQL and MariaDB stored procedures and functions with breakpoints, steppi
 
 *A routine paused in the Visual Studio Code frontend. Click the image to view it at full size.*
 
-The debugger is available through three frontends:
+The debugger is available through three frontends, each with its own installation guide:
 
-- Visual Studio Code extension
-- Apache NetBeans plugin
-- Standalone JavaFX application
+- [Visual Studio Code extension](vscode/README.md)
+- [Apache NetBeans plugin](plugin/README.md)
+- [Standalone JavaFX application](standalone/README.md)
 
 All three frontends provide the same core debugging workflow, so you can use the interface that best fits your development environment.
 
