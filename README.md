@@ -18,6 +18,10 @@ All frontends provide breakpoints, stepping, watches, variable inspection, and e
 
 The installers obtain supporting build tools such as Java and Node.js where possible. They never install NetBeans or Visual Studio Code. Maven does not need to be installed separately because the repository contains the [Apache Maven Wrapper](https://maven.apache.org/wrapper/).
 
+## Download a compiled release
+
+Ready-to-use alpha packages are available on the [GitHub Releases page](https://github.com/rk22-projects/proc-debugger-nb/releases). Choose the `.nbm` for NetBeans, the `.vsix` for Visual Studio Code, or the JAR matching your operating system for the standalone application. Java 17 or newer is required by the standalone JAR.
+
 ## Get the source code
 
 Open a terminal and run:

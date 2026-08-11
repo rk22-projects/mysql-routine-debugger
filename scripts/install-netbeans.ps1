@@ -155,20 +155,20 @@ Invoke-MavenWrapper @(
 
 Write-Host 'Building the NetBeans plugin...' -ForegroundColor Cyan
 Invoke-MavenWrapper @("-Dnb.version=$netBeansRelease", '-pl', 'plugin', '-am', 'clean', 'package')
-$nbm = Join-Path $repo 'plugin\target\proc-debugger-nb-1.0-SNAPSHOT.nbm'
-if (-not (Test-Path $nbm)) { throw "NetBeans module was not produced: $nbm" }
+$nbm = Get-ChildItem -LiteralPath (Join-Path $repo 'plugin\target') -Filter '*.nbm' -File | Select-Object -First 1
+if (-not $nbm) { throw 'NetBeans module was not produced.' }
 
 $release = Join-Path $repo 'release\netbeans'
 Reset-Directory $release
-Copy-Item -LiteralPath $nbm -Destination $release
+Copy-Item -LiteralPath $nbm.FullName -Destination $release
 
 Write-Host "Installing the module into NetBeans user directory: $NetBeansUserDir" -ForegroundColor Cyan
 New-Item -ItemType Directory -Path $NetBeansUserDir -Force | Out-Null
 $extract = Join-Path $repo '.tools\nbm-extract'
 Reset-Directory $extract
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::ExtractToDirectory($nbm, $extract)
+[System.IO.Compression.ZipFile]::ExtractToDirectory($nbm.FullName, $extract)
 Copy-Item -Path (Join-Path $extract 'netbeans\*') -Destination $NetBeansUserDir -Recurse -Force
 
-Write-Host "Installed NetBeans plugin: $nbm" -ForegroundColor Green
+Write-Host "Installed NetBeans plugin: $($nbm.FullName)" -ForegroundColor Green
 Write-Host "Restart NetBeans $netBeansMajor. The debugger appears under Window > MariaDB Procedure Debugger and in the database explorer routine actions."

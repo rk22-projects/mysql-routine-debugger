@@ -104,7 +104,7 @@ run bash "$REPO_ROOT/mvnw" -N org.apache.maven.plugins:maven-install-plugin:3.1.
 
 echo "Building the NetBeans plugin..."
 run bash "$REPO_ROOT/mvnw" "-Dnb.version=$NETBEANS_RELEASE" -pl plugin -am clean package
-NBM="$REPO_ROOT/plugin/target/proc-debugger-nb-1.0-SNAPSHOT.nbm"
+NBM="$(find "$REPO_ROOT/plugin/target" -maxdepth 1 -type f -name '*.nbm' -print -quit)"
 [[ -f "$NBM" ]] || { echo "NetBeans module was not produced: $NBM" >&2; exit 1; }
 
 RELEASE="$REPO_ROOT/release/netbeans"

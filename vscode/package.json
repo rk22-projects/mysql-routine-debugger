@@ -2,7 +2,7 @@
   "name": "mariadb-procedure-debugger",
   "displayName": "MariaDB Procedure Debugger",
   "description": "Debug MariaDB stored procedures and functions with breakpoints, stepping, watches, and execution logs.",
-  "version": "1.1.1",
+  "version": "0.1.0-alpha.1",
   "publisher": "rk22",
   "license": "UNLICENSED",
   "engines": {
