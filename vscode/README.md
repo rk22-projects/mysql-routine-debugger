@@ -11,11 +11,10 @@ The Visual Studio Code frontend supports MySQL and MariaDB stored procedures and
 
 ## Usage
 
-1. Open the **MySQL Routine Debugger** activity-bar view.
-2. Choose **Open Debugger**.
-3. Select MySQL or MariaDB and enter the connection details.
-4. Select a routine, add breakpoints, and start debugging.
-5. Invoke the routine from another database client.
-6. Use Continue or Step when execution pauses, then stop the session when finished.
+1. Run **MySQL Routine Debugger: Open Debugger** from the Command Palette, or select its status-bar item.
+2. Select **Connect**, choose MySQL or MariaDB, and enter the connection details. Use **Disconnect** when finished; disconnecting is disabled during an active debug session.
+3. Type in the routine field to filter its autocomplete dropdown, then choose a routine to load it automatically. Add breakpoints and start debugging.
+4. Invoke the routine from another database client.
+5. Use Continue (`F5`), Step Into (`F7`), Step Out (`Ctrl+F7`), or Step Over (`F8`) when execution pauses, then stop the session when finished. Step Into and Step Out appear as separate buttons only where each operation applies.
 
-Passwords are stored in Visual Studio Code secret storage. Use **Reset All Debug Changes** to recover from an interrupted session.
+The debug log is hidden by default; use **Show Log** when you need it. Passwords are stored in Visual Studio Code secret storage. Use **Reset All Debug Changes** to recover from an interrupted session.

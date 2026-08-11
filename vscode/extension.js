@@ -167,27 +167,6 @@ class Bridge {
   }
 }
 
-class ListProvider {
-  constructor(items, makeItem) {
-    this.items = items;
-    this.makeItem = makeItem;
-    this.emitter = new vscode.EventEmitter();
-    this.onDidChangeTreeData = this.emitter.event;
-  }
-  getTreeItem(item) { return this.makeItem(item); }
-  getChildren() { return this.items(); }
-  refresh() { this.emitter.fire(undefined); }
-  dispose() { this.emitter.dispose(); }
-}
-
-function routineItem(routine) {
-  const item = new vscode.TreeItem(routine.name, vscode.TreeItemCollapsibleState.None);
-  item.description = routine.type.toLowerCase();
-  item.iconPath = new vscode.ThemeIcon(routine.type === 'FUNCTION' ? 'symbol-function' : 'symbol-method');
-  item.command = { command: 'mysqlRoutineDebugger.load', title: 'Open Routine', arguments: [routine] };
-  return item;
-}
-
 function isExecutable(text) {
   const value = text.trim().toUpperCase();
   if (!value || value.startsWith('--') || value.startsWith('#') || value.startsWith('/*') || value.startsWith('*/')) return false;
@@ -199,11 +178,11 @@ function activate(context) {
   const output = vscode.window.createOutputChannel('MySQL Routine Debugger');
   const bridge = new Bridge(context, output);
   const state = {
-    routines: [], watches: new Map(), log: [], breakpoints: new Set(), lastId: 0,
+    routines: [], watches: new Map(), log: [], breakpoints: new Set(), sessions: [],
     connected: false, active: false, paused: false, polling: false, watchAll: false,
-    currentLine: -1, statusText: 'Ready', statusKind: 'normal', controlEpoch: 0
+    currentLine: -1, statusText: 'Ready', statusKind: 'normal', controlEpoch: 0,
+    resumingSessions: new Map()
   };
-  const routines = new ListProvider(() => state.routines, routineItem);
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.name = 'MySQL Routine Debugger';
   status.command = 'mysqlRoutineDebugger.open';
@@ -227,7 +206,12 @@ function activate(context) {
     currentLine: state.currentLine,
     statusText: state.statusText,
     statusKind: state.statusKind,
-    schema: state.schema
+    schema: state.schema,
+    activeSessionId: state.activeSessionId,
+    rootRoutineName: state.sessions.find(session => session.isRoot)?.name || state.routine?.name,
+    inCallee: state.sessions.some(session => session.sessionId === state.activeSessionId && !session.isRoot),
+    canStepInto: state.sessions.some(session => session.sessionId === state.activeSessionId && session.isRoot) &&
+      state.sessions.some(session => !session.isRoot)
   });
   const render = () => {
     if (panel) panel.webview.postMessage({ type: 'state', state: snapshot() });
@@ -249,24 +233,44 @@ function activate(context) {
     state.pollTimer = undefined;
     state.polling = false;
   };
-  const applyEntries = entries => {
+  const currentSession = () => state.sessions.find(session => session.sessionId === state.activeSessionId);
+  const sessionRequests = () => state.sessions.map(session => ({
+    name: session.name, sessionId: session.sessionId, sinceId: session.lastId || 0
+  }));
+  const showSession = session => {
+    if (!session) return;
+    const previous = currentSession();
+    if (previous) {
+      previous.watches = state.watches;
+      previous.watchAll = state.watchAll;
+    }
+    state.activeSessionId = session.sessionId;
+    state.routine = { name: session.name, type: session.type };
+    state.ddl = session.ddl;
+    state.breakpoints = session.breakpoints;
+    session.watches ||= new Map();
+    state.watches = session.watches;
+    state.watchAll = Boolean(session.watchAll);
+  };
+  const applyEntries = (entries, session) => {
     if (!entries.length) return false;
     for (const entry of entries) {
       state.log.push(entry);
       if (entry.varName !== '__BREAKPOINT__') {
-        const watched = state.watches.get(entry.varName);
-        if (watched || state.watchAll) {
+        session.watches ||= new Map();
+        const watchEntry = [...session.watches.entries()].find(([name]) => name.toLowerCase() === entry.varName.toLowerCase());
+        const watched = watchEntry && watchEntry[1];
+        if (watched || session.watchAll) {
           const previous = watched && watched.value;
-          state.watches.set(entry.varName, {
+          session.watches.set(watchEntry ? watchEntry[0] : entry.varName, {
             value: entry.varValue,
             changed: previous !== undefined && previous !== entry.varValue
           });
         }
       }
-      state.lastId = Math.max(state.lastId, entry.id);
+      session.lastId = Math.max(session.lastId || 0, entry.id);
     }
     if (state.log.length > 1000) state.log.splice(0, state.log.length - 1000);
-    render();
     return true;
   };
   const poll = async () => {
@@ -274,24 +278,60 @@ function activate(context) {
     state.polling = true;
     const epoch = state.controlEpoch;
     try {
-      const result = await bridge.request('poll', { sessionId: state.sessionId, sinceId: state.lastId });
+      const result = await bridge.request('poll', { sessions: sessionRequests() });
       if (epoch !== state.controlEpoch) return;
-      applyEntries(result.entries || []);
-      if (result.paused) {
-        let line = result.pausedLine || (/^L\d+$/.test(result.pausedAt || '') ? Number(result.pausedAt.slice(1)) : -1);
+      let entriesChanged = false;
+      for (const polled of result.sessions || []) {
+        const session = state.sessions.find(item => item.sessionId === polled.sessionId);
+        if (!session) continue;
+        session.previousStatus = session.status;
+        session.status = polled.status;
+        entriesChanged = applyEntries(polled.entries || [], session) || entriesChanged;
+        if (!polled.paused) {
+          state.resumingSessions.delete(session.sessionId);
+        } else if (state.resumingSessions.has(session.sessionId)) {
+          const previousLabel = state.resumingSessions.get(session.sessionId);
+          if (previousLabel && polled.pausedAt && polled.pausedAt !== previousLabel) {
+            state.resumingSessions.delete(session.sessionId);
+          }
+        }
+      }
+      const pausedResult = (result.sessions || [])
+        .filter(item => item.paused && !state.resumingSessions.has(item.sessionId))
+        .sort((a, b) => {
+          if (a.sessionId === state.activeSessionId) return -1;
+          if (b.sessionId === state.activeSessionId) return 1;
+          const aSession = state.sessions.find(item => item.sessionId === a.sessionId);
+          const bSession = state.sessions.find(item => item.sessionId === b.sessionId);
+          return Number(Boolean(aSession?.isRoot)) - Number(Boolean(bSession?.isRoot));
+        })[0];
+      const rootSession = state.sessions.find(session => session.isRoot);
+      const rootResult = (result.sessions || []).find(item => item.sessionId === rootSession?.sessionId);
+      if (pausedResult) {
+        const pausedSession = state.sessions.find(item => item.sessionId === pausedResult.sessionId);
+        const sessionChanged = state.activeSessionId !== pausedResult.sessionId;
+        showSession(pausedSession);
+        let line = /^L\d+$/.test(pausedResult.pausedAt || '') ? Number(pausedResult.pausedAt.slice(1)) : -1;
         // Clearing the log removes the persisted breakpoint marker but must not
         // erase the current source location while the DB session remains paused.
         if (line < 1 && state.paused && state.currentLine > 0) line = state.currentLine;
-        const changedPause = !state.paused || state.currentLine !== line;
+        const changedPause = !state.paused || sessionChanged || state.currentLine !== line;
         state.paused = true;
         state.currentLine = line;
         if (changedPause) {
           await setContext('paused', true);
-          setStatus(`Paused at ${state.routine.name}:${line > 0 ? line : result.pausedAt}`, 'paused');
+          setStatus(`Paused at ${state.routine.name}:${line > 0 ? line : pausedResult.pausedAt}`, 'paused');
         }
-      } else if (!result.paused && state.paused) {
+      } else if (rootResult?.status === 'completed') {
+        state.paused = false; state.currentLine = -1; await setContext('paused', false);
+        if (state.statusText !== 'Routine completed') setStatus('Routine completed');
+      } else if (rootResult?.status === 'running' && rootSession?.previousStatus === 'completed') {
+        setStatus(`Debugging ${rootSession.name}`);
+      } else if (state.paused) {
         state.paused = false; state.currentLine = -1; await setContext('paused', false);
         setStatus(`Debugging ${state.routine.name}`);
+      } else if (entriesChanged) {
+        render();
       }
     } catch (error) { output.appendLine(`Poll failed: ${error.message}`); }
     finally { state.polling = false; }
@@ -305,6 +345,7 @@ function activate(context) {
 
   async function connect(connection) {
     openPanel();
+    if (state.active) throw new Error('Stop the active debug session before changing the database connection.');
     const config = vscode.workspace.getConfiguration('mysqlRoutineDebugger');
     if (!connection) {
       const defaults = {
@@ -330,12 +371,13 @@ function activate(context) {
       config.update('database', database, vscode.ConfigurationTarget.Global)
     ]);
     state.routines = result.routines || []; state.connected = true; state.schema = result.schema; state.engine = result.engine;
-    routines.refresh(); await setContext('connected', true); setStatus(`Connected to ${result.schema}`);
+    await setContext('connected', true); setStatus(`Connected to ${result.schema}`);
     panel.webview.postMessage({ type: 'connected' });
   }
 
   async function loadRoutine(routine) {
     openPanel();
+    if (state.active) throw new Error('Stop the active debug session before loading another routine.');
     if (!routine) {
       routine = await vscode.window.showQuickPick(state.routines.map(r => ({ label: r.name, description: r.type, routine: r })), { placeHolder: 'Choose a routine' });
       routine = routine && routine.routine;
@@ -343,8 +385,14 @@ function activate(context) {
     if (!routine) return;
     const result = await bridge.request('load', routine);
     state.routine = routine; state.ddl = result.ddl; state.breakpoints = new Set(result.breakpoints || []);
-    state.active = result.deployed; state.sessionId = result.sessionId; state.lastId = 0; state.paused = false;
-    state.currentLine = -1; state.log = []; state.watches.clear();
+    state.active = result.deployed; state.paused = false; state.sessions = []; state.resumingSessions.clear();
+    state.watches = new Map(); state.watchAll = false;
+    if (result.deployed && result.sessionId) {
+      const root = { ...routine, sessionId: result.sessionId, ddl: result.ddl,
+        breakpoints: state.breakpoints, watches: state.watches, watchAll: false, lastId: 0, isRoot: true };
+      state.sessions = [root]; state.activeSessionId = root.sessionId;
+    }
+    state.currentLine = -1; state.log = [];
     await setContext('loaded', true); await setContext('active', state.active); await setContext('paused', false);
     if (state.active) { startPolling(); setStatus(`Debugging ${routine.name}`); }
     else { stopPolling(); setStatus(`Loaded ${routine.name}`); }
@@ -353,30 +401,51 @@ function activate(context) {
 
   async function deploy() {
     if (!state.routine) return;
-    setStatus(`Deploying ${state.routine.name}…`);
-    const result = await bridge.request('deploy', state.routine);
-    state.sessionId = result.sessionId; state.active = true; state.lastId = 0; state.log = []; state.currentLine = -1;
+    const rootRoutine = { ...state.routine };
+    setStatus(`Deploying ${rootRoutine.name}…`);
+    const result = await bridge.request('deploy', rootRoutine);
+    const root = { ...rootRoutine, sessionId: result.sessionId, ddl: state.ddl,
+      breakpoints: state.breakpoints, watches: state.watches, watchAll: state.watchAll, lastId: 0, isRoot: true };
+    const callees = (result.callees || []).map(callee => ({ ...callee,
+      breakpoints: new Set(callee.breakpoints || []), watches: new Map(), watchAll: false, lastId: 0, isRoot: false }));
+    state.sessions = [root, ...callees]; state.activeSessionId = root.sessionId;
+    state.active = true; state.log = []; state.currentLine = -1; state.resumingSessions.clear();
     await setContext('active', true); startPolling();
-    setStatus(`Debug active — call ${state.routine.name}(…) in your SQL client`);
+    setStatus(`Debug active — call ${rootRoutine.name}(…) in your SQL client`);
   }
 
   async function stop() {
     if (!state.active) return;
-    setStatus(`Stopping ${state.routine.name}…`);
-    const result = await bridge.request('stop', state.routine);
-    stopPolling(); state.active = false; state.paused = false; state.ddl = result.ddl; state.currentLine = -1;
+    const root = state.sessions.find(session => session.isRoot) || currentSession();
+    setStatus(`Stopping ${root.name}…`);
+    const result = await bridge.request('stop', { name: root.name, type: root.type });
+    state.watches = root.watches || state.watches; state.watchAll = Boolean(root.watchAll);
+    stopPolling(); state.active = false; state.paused = false; state.sessions = []; state.activeSessionId = undefined;
+    state.routine = { name: root.name, type: root.type }; state.ddl = result.ddl;
+    state.breakpoints = root.breakpoints; state.currentLine = -1; state.resumingSessions.clear();
     await setContext('active', false); await setContext('paused', false);
-    setStatus(`Stopped debugging ${state.routine.name}`);
+    setStatus(`Stopped debugging ${root.name}`);
   }
 
   async function resume(mode) {
     if (!state.paused) return;
+    const session = currentSession();
+    if (!session) return;
+    if (mode === 'stepInto' && !session.isRoot) return;
+    if (mode === 'stepOut' && session.isRoot) return;
     state.controlEpoch++;
+    state.resumingSessions.set(session.sessionId, state.currentLine > 0 ? `L${state.currentLine}` : null);
     state.paused = false; state.currentLine = -1;
     for (const value of state.watches.values()) value.changed = false;
     await setContext('paused', false);
-    setStatus(mode === 'step' ? 'Stepping…' : 'Continuing…');
-    await bridge.request(mode, { sessionId: state.sessionId });
+    if (session.isRoot && state.sessions.length > 1) {
+      const childSessions = state.sessions.filter(item => !item.isRoot);
+      const childStatus = mode === 'stepInto' ? 'step' : 'running';
+      await bridge.request('setSessionStates', { status: childStatus, sessions: childSessions });
+    }
+    const action = mode === 'continue' || mode === 'stepOut' ? 'continue' : 'step';
+    setStatus(mode === 'stepInto' ? 'Stepping into…' : mode === 'stepOut' ? 'Stepping out…' : mode === 'step' ? 'Stepping over…' : 'Continuing…');
+    await bridge.request(action, { sessionId: session.sessionId });
     render();
     poll();
   }
@@ -391,8 +460,11 @@ function activate(context) {
 
   function addWatch(name) {
     name = String(name || '').trim();
-    if (name && !state.watches.has(name)) {
-      const latest = [...state.log].reverse().find(entry => entry.varName !== '__BREAKPOINT__' && entry.varName.toLowerCase() === name.toLowerCase());
+    const alreadyWatched = [...state.watches.keys()].some(existing => existing.toLowerCase() === name.toLowerCase());
+    if (name && !alreadyWatched) {
+      const latest = [...state.log].reverse().find(entry => entry.varName !== '__BREAKPOINT__' &&
+        String(entry.routineName).toLowerCase() === String(state.routine?.name).toLowerCase() &&
+        entry.varName.toLowerCase() === name.toLowerCase());
       state.watches.set(name, latest ? { value: latest.varValue, changed: false } : {});
     }
     render();
@@ -407,26 +479,26 @@ function activate(context) {
       <link rel="stylesheet" href="${style}"><title>MySQL Routine Debugger</title></head>
       <body>
         <header class="toolbar">
-          <button id="connect" class="secondary">Connect</button><span class="separator"></span>
-          <select id="routine" aria-label="Routine"><option value="">Select a routine…</option></select>
-          <button id="load">Load</button><button id="debug" class="success">▶ Debug</button><button id="stop" class="danger">■ Stop</button>
-          <span class="separator wide"></span><button id="continue" class="primary">▶ Continue <kbd>F5</kbd></button><button id="step" class="purple">↓ Step <kbd>F8</kbd></button>
-          <span class="spacer"></span><button id="reset" class="icon" title="Reset all debug changes">⋮</button>
+          <button id="connect" class="secondary">Connect</button><button id="disconnect" class="secondary hidden">Disconnect</button><span class="separator"></span>
+          <div class="routine-combobox"><input id="routine" class="routine-picker" placeholder="Search or select a routine…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="routine-options" aria-expanded="false" aria-label="Routine"><button id="routine-toggle" class="routine-toggle" title="Show routines" tabindex="-1" aria-label="Show routines">⌄</button></div>
+          <button id="debug" class="success">▶ Debug</button><button id="stop" class="danger">■ Stop</button>
+          <span class="separator wide"></span><button id="continue" class="primary">▶ Continue <kbd>F5</kbd></button><button id="step-into" class="purple">↘ Step Into <kbd>F7</kbd></button><button id="step-out" class="purple hidden">↗ Step Out <kbd>Ctrl+F7</kbd></button><button id="step" class="purple">↓ Step Over <kbd>F8</kbd></button>
+          <span class="spacer"></span><button id="toggle-log" class="secondary">Show Log</button><button id="reset" class="icon" title="Reset all debug changes">⋮</button>
         </header>
+        <div id="routine-options" class="routine-options hidden" role="listbox"></div>
         <div id="banner" class="banner hidden"></div>
         <main class="workspace">
           <section class="source-pane"><div id="empty" class="empty">Connect and choose a routine to begin.</div><div id="source" class="source"></div></section>
-          <aside class="side-pane">
+          <aside id="side-pane" class="side-pane log-hidden">
             <section class="panel watches"><div class="panel-title"><span>Watches</span><label><input id="watch-all" type="checkbox"> All</label></div>
               <form id="watch-form"><input id="watch-name" placeholder="Variable name"><button title="Add watch">＋</button></form>
               <div class="table-wrap"><table><thead><tr><th>Name</th><th>Value</th><th></th></tr></thead><tbody id="watch-list"></tbody></table></div>
             </section>
-            <section class="panel logs"><div class="panel-title"><span>Debug Log</span><button id="clear-log" class="link">Clear</button></div>
-              <div class="table-wrap"><table><thead><tr><th>Time</th><th>Label</th><th>Variable</th><th>Value</th></tr></thead><tbody id="log-list"></tbody></table></div>
+            <section id="log-panel" class="panel logs hidden"><div class="panel-title"><span>Debug Log</span><button id="clear-log" class="link">Clear</button></div>
+              <div class="table-wrap"><table><thead><tr><th>Time</th><th>Routine</th><th>Label</th><th>Variable</th><th>Value</th></tr></thead><tbody id="log-list"></tbody></table></div>
             </section>
           </aside>
         </main>
-        <footer id="status" class="status">Ready</footer>
         <dialog id="connection-dialog"><form id="connection-form" method="dialog"><h2>Connect to MySQL or MariaDB</h2>
           <div class="connection-grid"><label class="full">Database engine<select id="db-engine"><option value="mysql">MySQL</option><option value="mariadb">MariaDB</option></select></label>
           <label>Host<input id="db-host" required></label><label>Port<input id="db-port" type="number" required></label>
@@ -463,18 +535,24 @@ function activate(context) {
             break;
           case 'showConnection': await connect(); break;
           case 'connect': await connect(message.connection); break;
-          case 'load': await loadRoutine(state.routines.find(r => r.name === message.name)); break;
+          case 'disconnect': await disconnect(); break;
+          case 'load': await loadRoutine(state.routines.find(r => r.name.toLowerCase() === String(message.name).toLowerCase())); break;
           case 'deploy': await deploy(); break;
           case 'stop': await stop(); break;
           case 'continue': await resume('continue'); break;
+          case 'stepInto': await resume('stepInto'); break;
+          case 'stepOut': await resume('stepOut'); break;
           case 'step': await resume('step'); break;
           case 'toggleBreakpoint': await toggleBreakpoint(message.line, message.text); break;
           case 'addWatch': addWatch(message.name); break;
           case 'removeWatch': state.watches.delete(message.name); render(); break;
-          case 'watchAll': state.watchAll = Boolean(message.enabled); render(); break;
+          case 'watchAll':
+            state.watchAll = Boolean(message.enabled);
+            if (currentSession()) currentSession().watchAll = state.watchAll;
+            render(); break;
           case 'clearLog':
-            if (state.sessionId) await bridge.request('clearLog', { sessionId: state.sessionId });
-            state.log = []; state.lastId = 0; render(); break;
+            if (state.sessions.length) await bridge.request('clearLogs', { sessions: sessionRequests() });
+            state.log = []; state.sessions.forEach(session => { session.lastId = 0; }); render(); break;
           case 'reset': await vscode.commands.executeCommand('mysqlRoutineDebugger.reset'); break;
         }
       } catch (error) { showError(error); }
@@ -483,14 +561,27 @@ function activate(context) {
   }
 
   const command = (name, handler) => context.subscriptions.push(vscode.commands.registerCommand(`mysqlRoutineDebugger.${name}`, (...args) => Promise.resolve(handler(...args)).catch(showError)));
+  async function disconnect() {
+    if (state.active) throw new Error('Stop the active debug session before disconnecting.');
+    if (!state.connected) return;
+    stopPolling();
+    await bridge.request('disconnect');
+    state.connected = false; state.routines = []; state.routine = undefined; state.ddl = '';
+    state.breakpoints = new Set(); state.watches = new Map(); state.watchAll = false; state.log = []; state.currentLine = -1;
+    state.sessions = []; state.activeSessionId = undefined; state.resumingSessions.clear();
+    await setContext('connected', false); await setContext('loaded', false); await setContext('paused', false);
+    setStatus('Disconnected');
+  }
   command('open', openPanel);
   command('connect', connect);
-  command('disconnect', async () => { stopPolling(); await bridge.request('disconnect'); state.connected = false; state.routines = []; routines.refresh(); await setContext('connected', false); setStatus('Ready'); });
-  command('refresh', async () => { state.routines = await bridge.request('routines'); routines.refresh(); render(); });
+  command('disconnect', disconnect);
+  command('refresh', async () => { state.routines = await bridge.request('routines'); render(); });
   command('load', loadRoutine);
   command('deploy', deploy);
   command('stop', stop);
   command('continue', () => resume('continue'));
+  command('stepInto', () => resume('stepInto'));
+  command('stepOut', () => resume('stepOut'));
   command('step', () => resume('step'));
   command('toggleBreakpoint', () => panel && panel.webview.postMessage({ type: 'toggleSelectedBreakpoint' }));
   command('addWatch', async () => {
@@ -498,17 +589,16 @@ function activate(context) {
     addWatch(name);
   });
   command('removeWatch', watch => { if (watch && watch.name) { state.watches.delete(watch.name); render(); } });
-  command('clearLog', async () => { if (state.sessionId) await bridge.request('clearLog', { sessionId: state.sessionId }); state.log = []; state.lastId = 0; render(); });
+  command('clearLog', async () => { if (state.sessions.length) await bridge.request('clearLogs', { sessions: sessionRequests() }); state.log = []; state.sessions.forEach(session => { session.lastId = 0; }); render(); });
   command('reset', async () => {
     const answer = await vscode.window.showWarningMessage('Restore all deployed routines and remove all debugger infrastructure?', { modal: true }, 'Reset All');
     if (answer !== 'Reset All') return;
-    stopPolling(); const result = await bridge.request('reset'); state.routines = result.routines || []; state.active = false; state.routine = undefined; state.ddl = ''; state.currentLine = -1;
-    routines.refresh(); await setContext('active', false); await setContext('loaded', false); setStatus('All debug changes reverted');
+    stopPolling(); const result = await bridge.request('reset'); state.routines = result.routines || []; state.active = false; state.routine = undefined; state.ddl = ''; state.currentLine = -1; state.sessions = []; state.activeSessionId = undefined; state.resumingSessions.clear(); state.watches = new Map(); state.watchAll = false; state.log = [];
+    await setContext('active', false); await setContext('loaded', false); await setContext('paused', false); setStatus('All debug changes reverted');
   });
 
   context.subscriptions.push(
-    output, bridge, routines, status,
-    vscode.window.registerTreeDataProvider('mysqlRoutineDebugger.routines', routines)
+    output, bridge, status
   );
   setContext('connected', false); setContext('loaded', false); setContext('active', false); setContext('paused', false);
 }

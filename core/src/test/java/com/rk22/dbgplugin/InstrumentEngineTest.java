@@ -79,6 +79,24 @@ public class InstrumentEngineTest {
         assertFalse(result.contains("`myproc`"));
     }
 
+    @Test public void buildProxy_procedureMarksCompletion() {
+        String result = InstrumentEngine.buildProxy("myproc", "PROCEDURE",
+            java.util.List.of(), java.util.List.of(), java.util.List.of(),
+            null, false, "session-1");
+        assertTrue(result.contains("CALL `_dbg_myproc`()"));
+        assertTrue(result.contains("SET status = 'completed'"));
+        assertTrue(result.indexOf("SET status = 'completed'") > result.indexOf("CALL `_dbg_myproc`()"));
+    }
+
+    @Test public void buildProxy_functionMarksCompletionBeforeReturn() {
+        String result = InstrumentEngine.buildProxy("myfunc", "FUNCTION",
+            java.util.List.of(), java.util.List.of(), java.util.List.of(),
+            "INT", true, "session-2");
+        assertTrue(result.contains("DECLARE v_dbg_result INT"));
+        assertTrue(result.contains("SET status = 'completed'"));
+        assertTrue(result.indexOf("SET status = 'completed'") < result.indexOf("RETURN v_dbg_result"));
+    }
+
     // ── instrumentAuto integration (no DB — checks structure only) ─────────────
 
     @Test public void instrument_noCallInsideCaseWhen() throws Exception {

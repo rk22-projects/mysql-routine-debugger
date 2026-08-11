@@ -6,11 +6,13 @@ public class PollResult {
     public final List<LogEntry> entries;
     public final boolean        paused;
     public final String         pausedAt;   // label like "L12", or null
+    public final String         status;
 
-    public PollResult(List<LogEntry> entries, boolean paused, String pausedAt) {
+    public PollResult(List<LogEntry> entries, boolean paused, String pausedAt, String status) {
         this.entries  = entries;
         this.paused   = paused;
         this.pausedAt = pausedAt;
+        this.status   = status;
     }
 
     /** Extract 1-based line number from a label like "L12", or -1 if not parseable. */

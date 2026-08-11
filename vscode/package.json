@@ -15,7 +15,7 @@
   "categories": ["Debuggers", "Other"],
   "keywords": ["mariadb", "mysql", "stored procedure", "debugger"],
   "activationEvents": [
-    "onView:mysqlRoutineDebugger.routines",
+    "onStartupFinished",
     "onCommand:mysqlRoutineDebugger.open",
     "onCommand:mysqlRoutineDebugger.connect"
   ],
@@ -34,6 +34,8 @@
       { "command": "mysqlRoutineDebugger.deploy", "title": "MySQL Routine Debugger: Start Debugging", "icon": "$(debug-start)" },
       { "command": "mysqlRoutineDebugger.stop", "title": "MySQL Routine Debugger: Stop Debugging", "icon": "$(debug-stop)" },
       { "command": "mysqlRoutineDebugger.continue", "title": "MySQL Routine Debugger: Continue", "icon": "$(debug-continue)" },
+      { "command": "mysqlRoutineDebugger.stepInto", "title": "MySQL Routine Debugger: Step Into", "icon": "$(debug-step-into)" },
+      { "command": "mysqlRoutineDebugger.stepOut", "title": "MySQL Routine Debugger: Step Out", "icon": "$(debug-step-out)" },
       { "command": "mysqlRoutineDebugger.step", "title": "MySQL Routine Debugger: Step Over", "icon": "$(debug-step-over)" },
       { "command": "mysqlRoutineDebugger.toggleBreakpoint", "title": "MySQL Routine Debugger: Toggle Breakpoint" },
       { "command": "mysqlRoutineDebugger.addWatch", "title": "MySQL Routine Debugger: Add Watch", "icon": "$(add)" },
@@ -41,36 +43,18 @@
       { "command": "mysqlRoutineDebugger.clearLog", "title": "MySQL Routine Debugger: Clear Log", "icon": "$(clear-all)" },
       { "command": "mysqlRoutineDebugger.reset", "title": "MySQL Routine Debugger: Reset All Debug Changes" }
     ],
-    "viewsContainers": {
-      "activitybar": [{
-        "id": "mysqlRoutineDebugger",
-        "title": "MySQL Routine Debugger",
-        "icon": "resources/database-debug.svg"
-      }]
-    },
-    "views": {
-      "mysqlRoutineDebugger": [
-        { "id": "mysqlRoutineDebugger.routines", "name": "Routines" }
-      ]
-    },
-    "viewsWelcome": [
-      { "view": "mysqlRoutineDebugger.routines", "contents": "Open the unified debugger to connect, inspect source, and control execution.\n[Open Debugger](command:mysqlRoutineDebugger.open)" }
-    ],
     "menus": {
-      "view/title": [
-        { "command": "mysqlRoutineDebugger.open", "when": "view == mysqlRoutineDebugger.routines", "group": "navigation@1" },
-        { "command": "mysqlRoutineDebugger.connect", "when": "view == mysqlRoutineDebugger.routines && !mysqlRoutineDebugger.connected", "group": "navigation" },
-        { "command": "mysqlRoutineDebugger.refresh", "when": "view == mysqlRoutineDebugger.routines && mysqlRoutineDebugger.connected", "group": "navigation" },
-        { "command": "mysqlRoutineDebugger.deploy", "when": "view == mysqlRoutineDebugger.routines && mysqlRoutineDebugger.loaded && !mysqlRoutineDebugger.active", "group": "navigation" },
-        { "command": "mysqlRoutineDebugger.stop", "when": "view == mysqlRoutineDebugger.routines && mysqlRoutineDebugger.active", "group": "navigation" }
-      ],
       "commandPalette": [
         { "command": "mysqlRoutineDebugger.continue", "when": "mysqlRoutineDebugger.paused" },
+        { "command": "mysqlRoutineDebugger.stepInto", "when": "mysqlRoutineDebugger.paused" },
+        { "command": "mysqlRoutineDebugger.stepOut", "when": "mysqlRoutineDebugger.paused" },
         { "command": "mysqlRoutineDebugger.step", "when": "mysqlRoutineDebugger.paused" }
       ]
     },
     "keybindings": [
       { "command": "mysqlRoutineDebugger.continue", "key": "f5", "when": "mysqlRoutineDebugger.paused" },
+      { "command": "mysqlRoutineDebugger.stepInto", "key": "f7", "when": "mysqlRoutineDebugger.paused" },
+      { "command": "mysqlRoutineDebugger.stepOut", "key": "ctrl+f7", "when": "mysqlRoutineDebugger.paused" },
       { "command": "mysqlRoutineDebugger.step", "key": "f8", "when": "mysqlRoutineDebugger.paused" },
       { "command": "mysqlRoutineDebugger.toggleBreakpoint", "key": "f9", "when": "activeWebviewPanelId == mysqlRoutineDebugger.panel" }
     ],
