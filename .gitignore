@@ -2,6 +2,7 @@
 target/
 release/
 *.vsix
+.tools/
 
 # Maven settings contain local credentials — never commit
 maven-settings.xml
