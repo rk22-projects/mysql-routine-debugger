@@ -44,6 +44,12 @@ public class InstrumentEngine {
             throw new DbgException("Failed to query parameters: " + e.getMessage(), e);
         }
 
+        return collectVariables(ddl, params);
+    }
+
+    /** Collect variables using parameter metadata already loaded by the caller. */
+    public static InstrumentVars collectVariables(String ddl, Collection<String> parameterNames) {
+        List<String> params = new ArrayList<>(parameterNames);
         List<String> declared = new ArrayList<>();
         Pattern declPat  = Pattern.compile("(?i)\\bDECLARE\\b\\s+");
         Pattern handlerPat = Pattern.compile("(?i)\\b(CONTINUE|EXIT|UNDO)\\s+HANDLER\\b");
@@ -152,6 +158,17 @@ public class InstrumentEngine {
     public static String instrumentAuto(String name, String ddl, String sessionId,
                                         Connection conn, String schema) throws DbgException {
         InstrumentVars vars = collectVariables(ddl, conn, schema, name);
+        return instrumentAuto(name, ddl, sessionId, vars);
+    }
+
+    /** Instruments a routine without performing database access. */
+    public static String instrumentAuto(String name, String ddl, String sessionId,
+                                        Collection<String> parameterNames) {
+        return instrumentAuto(name, ddl, sessionId, collectVariables(ddl, parameterNames));
+    }
+
+    private static String instrumentAuto(String name, String ddl, String sessionId,
+                                         InstrumentVars vars) {
         String[]     lines  = ddl.split("\n", -1);
         List<String> out    = new ArrayList<>();
 

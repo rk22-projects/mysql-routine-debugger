@@ -15,7 +15,8 @@ import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.stage.Stage;
 
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.SQLException;
 import java.util.*;
 import java.util.List;
 import java.util.concurrent.*;
@@ -23,7 +24,7 @@ import java.util.logging.*;
 
 /**
  * Main application window — equivalent to DebuggerTopComponent in the NB plugin.
- * Owns all DB state, orchestrates deploy/debug/stop, implements DebugEventListener.
+ * Thin JavaFX adapter around the shared debugger core.
  */
 public class MainWindow implements DebugEventListener {
 
@@ -50,16 +51,16 @@ public class MainWindow implements DebugEventListener {
 
     // ── DB state ──────────────────────────────────────────────────────────────
     private Connection    conn;
-    private DbgConnection db;
+    private DebuggerService debugger;
     private String        schema;
     private DebugSession  session;
+    private DebugDeployment deployment;
     private String        currentRoutine;
     private String        currentRoutineType;
     private boolean       debugActive;
     private final boolean isChild;
     private MainWindow    parentDebugger;
     private Stage         stage;
-    private final List<String[]> deployedCallees = new ArrayList<>();
     private final List<RoutineInfo> availableRoutines = new ArrayList<>();
     private boolean filteringRoutines;
 
@@ -86,7 +87,7 @@ public class MainWindow implements DebugEventListener {
 
     public BorderPane getRoot() { return root; }
     public void setStage(Stage stage) { this.stage = stage; }
-    public void promptInitialConnect() { if (!isChild && db == null) promptConnect(); }
+    public void promptInitialConnect() { if (!isChild && debugger == null) promptConnect(); }
 
     /** Call after the scene is attached to the stage so accelerators resolve. */
     public void initScene(javafx.scene.Scene scene) {
@@ -202,8 +203,8 @@ public class MainWindow implements DebugEventListener {
         });
 
         sourceView.setOnBreakpointToggle(label -> {
-            if (currentRoutine == null || db == null) return;
-            try { db.saveBreakpoints(currentRoutine, sourceView.getBreakpoints()); }
+            if (currentRoutine == null || debugger == null) return;
+            try { debugger.saveBreakpoints(currentRoutine, sourceView.getBreakpoints()); }
             catch (DbgException ex) { LOG.log(Level.WARNING, "bp save failed", ex); }
         });
         sourceView.setOnAddWatch(name -> {
@@ -289,7 +290,7 @@ public class MainWindow implements DebugEventListener {
                                     userF.getText().trim(), passF.getText());
             conn.setAutoCommit(true);
             schema = dbF.getText().trim();
-            db     = new DbgConnection(conn);
+            debugger = new DebuggerService(conn, schema);
         } catch (SQLException ex) {
             showError("Connection failed: " + ex.getMessage());
             return;
@@ -298,8 +299,7 @@ public class MainWindow implements DebugEventListener {
         setStatus("Connecting…");
         bgExec.submit(() -> {
             try {
-                db.setupInfrastructure();
-                List<RoutineInfo> routines = db.fetchRoutines(schema);
+                List<RoutineInfo> routines = debugger.initialize();
                 Platform.runLater(() -> {
                     setAvailableRoutines(routines);
                     setDebugActive(false);
@@ -314,9 +314,8 @@ public class MainWindow implements DebugEventListener {
     private void disconnect() {
         if (debugActive) { showError("Stop the active debug session before disconnecting."); return; }
         stopSession();
-        deployedCallees.clear();
         try { if (conn != null) conn.close(); } catch (SQLException ignored) {}
-        conn = null; db = null; schema = null;
+        conn = null; debugger = null; schema = null; deployment = null;
         availableRoutines.clear();
         filteringRoutines = true;
         routineCombo.getItems().clear(); routineCombo.setValue(null); routineCombo.getEditor().clear();
@@ -331,7 +330,7 @@ public class MainWindow implements DebugEventListener {
     // ── Load routine ──────────────────────────────────────────────────────────
 
     private void loadRoutine() {
-        if (db == null) { promptConnect(); return; }
+        if (debugger == null) { promptConnect(); return; }
         RoutineInfo ri = routineCombo.getValue();
         if (ri == null) return;
         currentRoutine     = ri.name;
@@ -343,17 +342,18 @@ public class MainWindow implements DebugEventListener {
         final String rType = ri.type;
         bgExec.submit(() -> {
             try {
-                String ddl      = db.loadOriginalDdl(rName);
-                boolean deployed = ddl != null;
-                if (!deployed) ddl = db.fetchRoutineDdl(rName, rType);
-                final String finalDdl = ddl;
-                List<String> bps = db.loadBreakpoints(rName);
-                String sid = deployed ? db.loadSessionId(rName) : null;
+                RoutineDetails loaded = debugger.loadRoutine(rName, rType);
+                if (loaded.deployed && loaded.sessionId != null) {
+                    deployment = new DebugDeployment(new DeployedRoutine(
+                        rName, rType, loaded.sessionId, loaded.ddl, loaded.breakpoints), List.of());
+                } else {
+                    deployment = null;
+                }
                 Platform.runLater(() -> {
-                    sourceView.setSource(finalDdl);
-                    sourceView.setBreakpoints(bps);
-                    if (deployed) {
-                        startSession(sid != null ? sid : newSessionId());
+                    sourceView.setSource(loaded.ddl);
+                    sourceView.setBreakpoints(loaded.breakpoints);
+                    if (loaded.deployed) {
+                        startSession(loaded.sessionId);
                         showBanner(rName);
                         setDebugActive(true);
                     } else {
@@ -371,13 +371,12 @@ public class MainWindow implements DebugEventListener {
     // ── Deploy / Stop ─────────────────────────────────────────────────────────
 
     private void deployDebug() {
-        if (db == null || currentRoutine == null) return;
+        if (debugger == null || currentRoutine == null) return;
         stopSession();
         logView.clear();
         watchView.clearValues();
         watchPrev.clear();
         watchChanged.clear();
-        String sid = newSessionId();
         setDebugActive(false);
         btnDeploy.setDisable(true);
         setStatus("Deploying…");
@@ -386,46 +385,11 @@ public class MainWindow implements DebugEventListener {
         final String routineType = currentRoutineType;
         bgExec.submit(() -> {
             try {
-                String originalDdl  = db.fetchRoutineDdl(routine, routineType);
-                String origCopy     = InstrumentEngine.buildOrigCopy(routine, originalDdl);
-                String instrumented = InstrumentEngine.instrumentAuto(routine, originalDdl, sid, conn, schema);
-
-                List<String> pNames = new ArrayList<>(), pTypes = new ArrayList<>(), pModes = new ArrayList<>();
-                try (PreparedStatement ps = conn.prepareStatement(
-                        "SELECT PARAMETER_NAME, DTD_IDENTIFIER, PARAMETER_MODE " +
-                        "FROM information_schema.PARAMETERS " +
-                        "WHERE SPECIFIC_SCHEMA=? AND SPECIFIC_NAME=? AND ORDINAL_POSITION>0 " +
-                        "ORDER BY ORDINAL_POSITION")) {
-                    ps.setString(1, schema); ps.setString(2, routine);
-                    ResultSet rs = ps.executeQuery();
-                    while (rs.next()) {
-                        pNames.add(rs.getString(1));
-                        pTypes.add(rs.getString(2));
-                        pModes.add(rs.getString(3) != null ? rs.getString(3) : "IN");
-                    }
-                }
-                String returnType    = fetchReturnType(routine, routineType);
-                boolean deterministic = fetchDeterministic(routine);
-                String proxy = InstrumentEngine.buildProxy(
-                    routine, routineType, pNames, pTypes, pModes, returnType, deterministic, sid);
-
-                db.deployDebug(routine, routineType, originalDdl, origCopy, instrumented, proxy, sid);
-                db.initSessionState(sid, routine);
-
-                Set<String> calleeNames = InstrumentEngine.findCallees(originalDdl);
-                List<String[]> newCallees = new ArrayList<>();
-                for (String callee : calleeNames) {
-                    if (db.isDeployed(callee)) continue;
-                    String calleeType = findRoutineType(callee);
-                    if (calleeType == null) continue;
-                    String calleeSid = newSessionId();
-                    deployRoutineToDb(callee, calleeType, db.fetchRoutineDdl(callee, calleeType), calleeSid, "running");
-                    newCallees.add(new String[]{callee, calleeType, calleeSid});
-                }
+                DebugDeployment started = debugger.deploy(routine, routineType);
+                deployment = started;
 
                 Platform.runLater(() -> {
-                    startSession(sid);
-                    deployedCallees.addAll(newCallees);
+                    startSession(started.root.sessionId);
                     showBanner(routine);
                     setDebugActive(true);
                     setStatus("Debug active — call " + routine + "(…) in your SQL client");
@@ -439,69 +403,17 @@ public class MainWindow implements DebugEventListener {
         });
     }
 
-    private void deployRoutineToDb(String routine, String routineType, String originalDdl,
-                                   String sid, String initialStatus) throws Exception {
-        String origCopy = InstrumentEngine.buildOrigCopy(routine, originalDdl);
-        String instrumented = InstrumentEngine.instrumentAuto(routine, originalDdl, sid, conn, schema);
-        List<String> names = new ArrayList<>(), types = new ArrayList<>(), modes = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT PARAMETER_NAME, DTD_IDENTIFIER, PARAMETER_MODE FROM information_schema.PARAMETERS " +
-                "WHERE SPECIFIC_SCHEMA=? AND SPECIFIC_NAME=? AND ORDINAL_POSITION>0 ORDER BY ORDINAL_POSITION")) {
-            ps.setString(1, schema); ps.setString(2, routine);
-            ResultSet rs = ps.executeQuery();
-            while (rs.next()) {
-                names.add(rs.getString(1)); types.add(rs.getString(2));
-                modes.add(rs.getString(3) == null ? "IN" : rs.getString(3));
-            }
-        }
-        String proxy = InstrumentEngine.buildProxy(routine, routineType, names, types, modes,
-            fetchReturnType(routine, routineType), fetchDeterministic(routine), sid);
-        db.deployDebug(routine, routineType, originalDdl, origCopy, instrumented, proxy, sid);
-        db.initSessionState(sid, routine, initialStatus);
-    }
-
-    private String findRoutineType(String name) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT ROUTINE_TYPE FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
-            ps.setString(1, schema); ps.setString(2, name);
-            ResultSet rs = ps.executeQuery();
-            return rs.next() ? rs.getString(1) : null;
-        }
-    }
-
     private void stopDebugging() {
-        if (db == null || currentRoutine == null) return;
+        if (debugger == null || currentRoutine == null) return;
         stopSession();
         btnStop.setDisable(true);
         setStatus("Stopping…");
 
         final String routine     = currentRoutine;
-        final String routineType = currentRoutineType;
-        final List<String[]> callees = new ArrayList<>(deployedCallees);
-        deployedCallees.clear();
         bgExec.submit(() -> {
             try {
-                String sid = db.loadSessionId(routine);
-                if (sid != null) {
-                    try { db.updateState(sid, "continue"); } catch (DbgException ignored) {}
-                }
-                String origDdl = db.loadOriginalDdl(routine);
-                if (origDdl == null) {
-                    Platform.runLater(() -> {
-                        setDebugActive(true);
-                        showError("No saved original found.");
-                    });
-                    return;
-                }
-                db.restoreOriginal(routine, routineType, origDdl);
-                for (String[] callee : callees) {
-                    try {
-                        db.updateState(callee[2], "continue");
-                        String calleeDdl = db.loadOriginalDdl(callee[0]);
-                        if (calleeDdl != null) db.restoreOriginal(callee[0], callee[1], calleeDdl);
-                    } catch (DbgException ignored) {}
-                }
-                String freshDdl = db.fetchRoutineDdl(routine, routineType);
+                String freshDdl = debugger.stop(deployment);
+                deployment = null;
                 Platform.runLater(() -> {
                     hideBanner();
                     sourceView.clearCurrentLine();
@@ -520,7 +432,7 @@ public class MainWindow implements DebugEventListener {
     }
 
     private void resetAll() {
-        if (db == null) return;
+        if (debugger == null) return;
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
             "This will restore ALL deployed routines to their original DDL,\n" +
             "drop all _dbg_* and _orig_* routines, and remove debug tables.\n\nContinue?",
@@ -530,7 +442,7 @@ public class MainWindow implements DebugEventListener {
         if (confirm.showAndWait().orElse(ButtonType.NO) != ButtonType.YES) return;
 
         stopSession();
-        deployedCallees.clear();
+        deployment = null;
         logView.clear();
         watchView.clearValues();
         watchPrev.clear();
@@ -541,12 +453,9 @@ public class MainWindow implements DebugEventListener {
         btnDeploy.setDisable(true);
         setStatus("Resetting all debug changes…");
 
-        final String currentSchema = schema;
         bgExec.submit(() -> {
             try {
-                db.restoreAll(currentSchema);
-                db.setupInfrastructure();
-                List<RoutineInfo> routines = db.fetchRoutines(currentSchema);
+                List<RoutineInfo> routines = debugger.reset();
                 Platform.runLater(() -> {
                     setAvailableRoutines(routines);
                     sourceView.setSource(null);
@@ -566,8 +475,7 @@ public class MainWindow implements DebugEventListener {
 
     private void startSession(String sid) {
         stopSession();
-        session = new DebugSession(sid, currentRoutine, db);
-        session.start(this, Platform::runLater);
+        session = debugger.openSession(currentRoutine, sid, this, Platform::runLater);
     }
 
     private void stopSession() {
@@ -582,8 +490,8 @@ public class MainWindow implements DebugEventListener {
         sourceView.clearCurrentLine();
         watchChanged.clear();
         watchView.clearChanged();
-        if (!isChild) setCalleesStatus("running");
-        session.doContinue();
+        if (isChild) debugger.stepOut(session);
+        else debugger.continueExecution(session, deployment);
         setPaused(false);
         setStatus("Resumed…");
     }
@@ -593,7 +501,7 @@ public class MainWindow implements DebugEventListener {
         sourceView.clearCurrentLine();
         watchChanged.clear();
         watchView.clearChanged();
-        session.doStep();
+        debugger.step(session);
         setPaused(false);
         setStatus("Stepping…");
     }
@@ -601,29 +509,19 @@ public class MainWindow implements DebugEventListener {
     private void doStepOver() {
         if (session == null || !session.isPaused()) return;
         sourceView.clearCurrentLine(); watchChanged.clear(); watchView.clearChanged();
-        setCalleesStatus("running");
-        session.doStep(); setPaused(false); setStatus("Stepping over…");
+        debugger.stepOver(session, deployment); setPaused(false); setStatus("Stepping over…");
     }
 
     private void doStepInto() {
         if (session == null || !session.isPaused()) return;
         sourceView.clearCurrentLine(); watchChanged.clear(); watchView.clearChanged();
-        setCalleesStatus("step");
-        for (String[] callee : deployedCallees) session.registerChildSession(callee[0], callee[2]);
-        session.doStep(); setPaused(false); setStatus("Stepping into…");
+        debugger.stepInto(session, deployment); setPaused(false); setStatus("Stepping into…");
     }
 
     private void doStepOut() {
         if (session == null || !session.isPaused()) return;
         sourceView.clearCurrentLine(); watchChanged.clear(); watchView.clearChanged();
-        session.doContinue(); setPaused(false); setStatus("Stepping out…");
-    }
-
-    private void setCalleesStatus(String status) {
-        for (String[] callee : deployedCallees) {
-            try { db.initSessionState(callee[2], callee[0], status); }
-            catch (DbgException ignored) {}
-        }
+        debugger.stepOut(session); setPaused(false); setStatus("Stepping out…");
     }
 
     private void clearLog() {
@@ -678,7 +576,7 @@ public class MainWindow implements DebugEventListener {
     public void onCalleeStarted(String routineName, String sessionId) {
         MainWindow child = new MainWindow(true);
         child.parentDebugger = this;
-        child.conn = conn; child.db = db; child.schema = schema;
+        child.conn = conn; child.debugger = debugger; child.schema = schema;
         child.currentRoutine = routineName;
         Stage childStage = new Stage();
         childStage.setTitle("MySQL Routine Debugger — " + routineName);
@@ -690,15 +588,13 @@ public class MainWindow implements DebugEventListener {
         child.setStatus("Loading " + routineName + "…");
         bgExec.submit(() -> {
             try {
-                String type = db.loadOriginalType(routineName);
-                String ddl = db.loadOriginalDdl(routineName);
-                if (ddl == null && type != null) ddl = db.fetchRoutineDdl(routineName, type);
-                List<String> bps = db.loadBreakpoints(routineName);
-                String finalDdl = ddl, finalType = type;
+                DeployedRoutine callee = deployment == null ? null : deployment.callees.stream()
+                    .filter(item -> item.name.equals(routineName)).findFirst().orElse(null);
+                if (callee == null) throw new DbgException("No deployed callee found for " + routineName);
                 Platform.runLater(() -> {
-                    child.currentRoutineType = finalType;
-                    child.sourceView.setSource(finalDdl);
-                    child.sourceView.setBreakpoints(bps);
+                    child.currentRoutineType = callee.type;
+                    child.sourceView.setSource(callee.ddl);
+                    child.sourceView.setBreakpoints(callee.breakpoints);
                     child.startSession(sessionId);
                     child.setDebugActive(true);
                 });
@@ -716,14 +612,9 @@ public class MainWindow implements DebugEventListener {
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     public void onClose() {
-        if (session != null && db != null) {
-            try { db.updateState(session.sessionId, "continue"); } catch (DbgException ignored) {}
-        }
-        if (!isChild && db != null) {
-            for (String[] callee : deployedCallees) {
-                try { db.updateState(callee[2], "continue"); } catch (DbgException ignored) {}
-            }
-        }
+        if (session != null && debugger != null)
+            try { debugger.updateSessionState(session.sessionId, "continue"); } catch (DbgException ignored) {}
+        if (!isChild && debugger != null) debugger.unblock(deployment);
         sourceView.refreshValues();
         stopSession();
         bgExec.shutdownNow();
@@ -734,13 +625,13 @@ public class MainWindow implements DebugEventListener {
 
     private void setDebugActive(boolean active) {
         debugActive = active;
-        btnDeploy.setDisable(active || db == null);
+        btnDeploy.setDisable(active || debugger == null);
         btnStop  .setDisable(!active);
         if (!isChild) {
-            btnConnect.setVisible(db == null); btnConnect.setManaged(db == null);
-            btnDisconnect.setVisible(db != null); btnDisconnect.setManaged(db != null);
-            btnDisconnect.setDisable(active || db == null);
-            routineCombo.setDisable(active || db == null);
+            btnConnect.setVisible(debugger == null); btnConnect.setManaged(debugger == null);
+            btnDisconnect.setVisible(debugger != null); btnDisconnect.setManaged(debugger != null);
+            btnDisconnect.setDisable(active || debugger == null);
+            routineCombo.setDisable(active || debugger == null);
         }
     }
 
@@ -777,29 +668,6 @@ public class MainWindow implements DebugEventListener {
         setStatus(msg);
     }
 
-    // ── DB helpers ────────────────────────────────────────────────────────────
-
-    private String fetchReturnType(String routine, String type) throws SQLException {
-        if (!"FUNCTION".equalsIgnoreCase(type)) return null;
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT DTD_IDENTIFIER FROM information_schema.ROUTINES " +
-                "WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
-            ps.setString(1, schema); ps.setString(2, routine);
-            ResultSet rs = ps.executeQuery();
-            return rs.next() ? rs.getString(1) : "VARCHAR(255)";
-        }
-    }
-
-    private boolean fetchDeterministic(String routine) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT IS_DETERMINISTIC FROM information_schema.ROUTINES " +
-                "WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
-            ps.setString(1, schema); ps.setString(2, routine);
-            ResultSet rs = ps.executeQuery();
-            return rs.next() && "YES".equals(rs.getString(1));
-        }
-    }
-
     // ── Static helpers ────────────────────────────────────────────────────────
 
     private static Button btn(String text, String bg, String fg) {
@@ -827,7 +695,4 @@ public class MainWindow implements DebugEventListener {
         return f;
     }
 
-    private static String newSessionId() {
-        return UUID.randomUUID().toString().replace("-", "").substring(0, 14);
-    }
 }

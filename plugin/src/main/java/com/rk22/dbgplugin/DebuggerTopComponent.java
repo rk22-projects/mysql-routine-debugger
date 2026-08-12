@@ -11,7 +11,9 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.event.*;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.util.*;
 import java.util.List;
 import java.util.logging.*;
@@ -32,16 +34,14 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
     // ── DB state ──────────────────────────────────────────────────────────────
     private Connection          conn;
-    private DbgConnection       db;
+    private DebuggerService     debugger;
     private String              schema;
     private DebugSession        session;
+    private DebugDeployment     deployment;
     private String              currentRoutine;
     private String              currentRoutineType;
     private boolean             debugActive = false;
     private boolean             ownsConnection = false;
-
-    /** Callees auto-deployed alongside the primary routine; restored when primary stops. */
-    private final List<String[]> deployedCallees = new ArrayList<>();  // {name, type, sid}
 
     // ── UI ────────────────────────────────────────────────────────────────────
     private final JComboBox<RoutineInfo> routineCombo = new JComboBox<>();
@@ -93,7 +93,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
      * The caller is responsible for calling open(), startSession(), and setDebugActive(true).
      */
     static DebuggerTopComponent createChildInstance(String routineName,
-                                                     DbgConnection db,
+                                                     DebuggerService debugger,
                                                      Connection conn,
                                                      String schema,
                                                      DebuggerTopComponent parent) {
@@ -101,7 +101,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         tc.parentDebugger = parent;
         tc.currentRoutine = routineName;
         tc.conn   = conn;
-        tc.db     = db;
+        tc.debugger = debugger;
         tc.schema = schema;
         tc.setName("↵ " + routineName);
         tc.setDisplayName("↵ " + routineName);
@@ -276,7 +276,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         sourcePanel.setVarValueLookup(watchPrev::get);
         sourcePanel.setOnBreakpointToggle(label -> {
             if (currentRoutine == null) return;
-            try { db.saveBreakpoints(currentRoutine, sourcePanel.getBreakpoints()); }
+            try { debugger.saveBreakpoints(currentRoutine, sourcePanel.getBreakpoints()); }
             catch (DbgException ex) { LOG.log(Level.WARNING, "bp save failed", ex); }
         });
         sourcePanel.setOnAddWatch(name -> {
@@ -324,8 +324,8 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
     @Override
     protected void componentOpened() {
-        if (!isChild && db == null) SwingUtilities.invokeLater(() -> {
-            if (db == null && isShowing()) promptConnect();
+        if (!isChild && debugger == null) SwingUtilities.invokeLater(() -> {
+            if (debugger == null && isShowing()) promptConnect();
         });
     }
 
@@ -395,7 +395,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
             conn = controlConn;
             schema = newSchema;
-            db = new DbgConnection(controlConn);
+            debugger = new DebuggerService(controlConn, schema);
             ownsConnection = true;
             if (previousOwned && previousConn != null && previousConn != controlConn) {
                 try { previousConn.close(); } catch (SQLException ignored) {}
@@ -410,8 +410,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         setStatus("Connecting…", false);
         RequestProcessor.getDefault().post(() -> {
             try {
-                db.setupInfrastructure();
-                List<RoutineInfo> routines = db.fetchRoutines(schema);
+                List<RoutineInfo> routines = debugger.initialize();
                 SwingUtilities.invokeLater(() -> {
                     setAvailableRoutines(routines);
                     setStatus("Connected to " + schema, false);
@@ -452,7 +451,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
                                     userF.getText().trim(), new String(passF.getPassword()));
             conn.setAutoCommit(true);
             schema = dbF.getText().trim();
-            db     = new DbgConnection(conn);
+            debugger = new DebuggerService(conn, schema);
             ownsConnection = true;
         } catch (Exception ex) {
             showError("Connection failed: " + ex.getMessage());
@@ -461,8 +460,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         setStatus("Connecting…", false);
         RequestProcessor.getDefault().post(() -> {
             try {
-                db.setupInfrastructure();
-                List<RoutineInfo> routines = db.fetchRoutines(schema);
+                List<RoutineInfo> routines = debugger.initialize();
                 SwingUtilities.invokeLater(() -> {
                     setAvailableRoutines(routines);
                     setDebugActive(false);
@@ -507,7 +505,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         }
         stopSession();
         try { if (ownsConnection && conn != null) conn.close(); } catch (SQLException ignored) {}
-        conn = null; db = null; schema = null;
+        conn = null; debugger = null; schema = null; deployment = null;
         ownsConnection = false;
         availableRoutines.clear();
         filteringRoutines = true;
@@ -524,7 +522,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     // ── Routine loading ───────────────────────────────────────────────────────
 
     private void loadRoutine() {
-        if (db == null) { promptConnect(); return; }
+        if (debugger == null) { promptConnect(); return; }
         RoutineInfo ri = (RoutineInfo) routineCombo.getSelectedItem();
         if (ri == null) return;
         currentRoutine     = ri.name;
@@ -536,18 +534,18 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         final String rType = ri.type;
         RequestProcessor.getDefault().post(() -> {
             try {
-                String ddl = db.loadOriginalDdl(rName);
-                boolean deployed = ddl != null;
-                if (!deployed) ddl = db.fetchRoutineDdl(rName, rType);
-                final String finalDdl = ddl;
-                List<String> bps = db.loadBreakpoints(rName);
-                String sid = deployed ? db.loadSessionId(rName) : null;
-                final String finalSid = sid;
+                RoutineDetails loaded = debugger.loadRoutine(rName, rType);
+                if (loaded.deployed && loaded.sessionId != null) {
+                    deployment = new DebugDeployment(new DeployedRoutine(
+                        rName, rType, loaded.sessionId, loaded.ddl, loaded.breakpoints), List.of());
+                } else {
+                    deployment = null;
+                }
                 SwingUtilities.invokeLater(() -> {
-                    sourcePanel.setSource(finalDdl);
-                    sourcePanel.setBreakpoints(bps);
-                    if (deployed) {
-                        startSession(finalSid != null ? finalSid : newSessionId());
+                    sourcePanel.setSource(loaded.ddl);
+                    sourcePanel.setBreakpoints(loaded.breakpoints);
+                    if (loaded.deployed) {
+                        startSession(loaded.sessionId);
                         showBanner(rName);
                         setDebugActive(true);
                     } else {
@@ -565,13 +563,12 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     // ── Deploy / Stop ─────────────────────────────────────────────────────────
 
     private void deployDebug() {
-        if (db == null || currentRoutine == null) return;
+        if (debugger == null || currentRoutine == null) return;
         stopSession();
         logPanel.clear();
         watchPanel.clearValues();
         watchPrev.clear();
         watchChanged.clear();
-        String sid = newSessionId();
         setDebugActive(false);
         btnDeploy.setEnabled(false);
         setStatus("Deploying…", false);
@@ -580,28 +577,11 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         final String routineType = currentRoutineType;
         RequestProcessor.getDefault().post(() -> {
             try {
-                String originalDdl = db.fetchRoutineDdl(routine, routineType);
-                deployRoutineToDb(routine, routineType, originalDdl, sid, "running");
-
-                // Auto-instrument routines called by this one (one level deep)
-                Set<String> calleeNames = InstrumentEngine.findCallees(originalDdl);
-                List<String[]> newCallees = new ArrayList<>();
-                for (String callee : calleeNames) {
-                    if (db.isDeployed(callee)) continue;
-                    String calleeType = findRoutineType(callee);
-                    if (calleeType == null) continue;
-                    String calleeSid = newSessionId();
-                    String calleeDdl = db.fetchRoutineDdl(callee, calleeType);
-                    deployRoutineToDb(callee, calleeType, calleeDdl, calleeSid, "running");
-                    newCallees.add(new String[]{callee, calleeType, calleeSid});
-                }
+                DebugDeployment started = debugger.deploy(routine, routineType);
+                deployment = started;
 
                 SwingUtilities.invokeLater(() -> {
-                    startSession(sid);
-                    for (String[] c : newCallees) {
-                        session.registerChildSession(c[0], c[2]);
-                        deployedCallees.add(c);
-                    }
+                    startSession(started.root.sessionId);
                     showBanner(routine);
                     setDebugActive(true);
                     setStatus("Debug active — call " + routine + "(…) in your SQL client", false);
@@ -615,109 +595,17 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         });
     }
 
-    /**
-     * Instruments and deploys a single routine. Must be called from a background thread.
-     * @param initStatus  "running" for the primary routine, "step" for auto-deployed callees
-     */
-    private void deployRoutineToDb(String routine, String routineType, String originalDdl,
-                                    String sid, String initStatus) throws Exception {
-        String origCopy     = InstrumentEngine.buildOrigCopy(routine, originalDdl);
-        String instrumented = InstrumentEngine.instrumentAuto(routine, originalDdl, sid, conn, schema);
-
-        List<String> pNames = new ArrayList<>();
-        List<String> pTypes = new ArrayList<>();
-        List<String> pModes = new ArrayList<>();
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT PARAMETER_NAME, DTD_IDENTIFIER, PARAMETER_MODE " +
-                "FROM information_schema.PARAMETERS " +
-                "WHERE SPECIFIC_SCHEMA=? AND SPECIFIC_NAME=? AND ORDINAL_POSITION>0 " +
-                "ORDER BY ORDINAL_POSITION")) {
-            ps.setString(1, schema); ps.setString(2, routine);
-            ResultSet rs = ps.executeQuery();
-            while (rs.next()) {
-                pNames.add(rs.getString(1));
-                pTypes.add(rs.getString(2));
-                pModes.add(rs.getString(3) != null ? rs.getString(3) : "IN");
-            }
-        }
-        String returnType = "FUNCTION".equalsIgnoreCase(routineType) ? fetchReturnType(routine) : null;
-        boolean deterministic = false;
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT IS_DETERMINISTIC FROM information_schema.ROUTINES " +
-                "WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
-            ps.setString(1, schema); ps.setString(2, routine);
-            ResultSet rs = ps.executeQuery();
-            if (rs.next()) deterministic = "YES".equals(rs.getString(1));
-        }
-        String proxy = InstrumentEngine.buildProxy(
-            routine, routineType, pNames, pTypes, pModes, returnType, deterministic, sid);
-
-        db.deployDebug(routine, routineType, originalDdl, origCopy, instrumented, proxy, sid);
-        db.initSessionState(sid, routine, initStatus);
-    }
-
-    private String findRoutineType(String name) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT ROUTINE_TYPE FROM information_schema.ROUTINES " +
-                "WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
-            ps.setString(1, schema);
-            ps.setString(2, name);
-            ResultSet rs = ps.executeQuery();
-            return rs.next() ? rs.getString(1) : null;
-        }
-    }
-
-    private String fetchReturnType(String routineName) throws SQLException {
-        try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT DTD_IDENTIFIER FROM information_schema.ROUTINES " +
-                "WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
-            ps.setString(1, schema); ps.setString(2, routineName);
-            ResultSet rs = ps.executeQuery();
-            return rs.next() ? rs.getString(1) : "VARCHAR(255)";
-        }
-    }
-
     private void stopDebugging() {
-        if (db == null || currentRoutine == null) return;
+        if (debugger == null || currentRoutine == null) return;
         stopSession();
         btnStop.setEnabled(false);
         setStatus("Stopping…", false);
 
         final String routine          = currentRoutine;
-        final String routineType      = currentRoutineType;
-        final List<String[]> callees  = new ArrayList<>(deployedCallees);
-        deployedCallees.clear();
-
         RequestProcessor.getDefault().post(() -> {
             try {
-                // Unblock any paused DB session so the caller's SQL doesn't hang
-                String sid = db.loadSessionId(routine);
-                if (sid != null) {
-                    try { db.updateState(sid, "continue"); } catch (DbgException ignored) {}
-                }
-                String origDdl = db.loadOriginalDdl(routine);
-                if (origDdl == null) {
-                    SwingUtilities.invokeLater(() -> {
-                        setDebugActive(true);
-                        showError("No saved original found.");
-                    });
-                    return;
-                }
-                db.restoreOriginal(routine, routineType, origDdl);
-
-                // Unblock and restore all auto-deployed callees
-                for (String[] callee : callees) {
-                    try {
-                        String calleeSid = db.loadSessionId(callee[0]);
-                        if (calleeSid != null) {
-                            try { db.updateState(calleeSid, "continue"); } catch (DbgException ignored) {}
-                        }
-                        String calleeDdl = db.loadOriginalDdl(callee[0]);
-                        if (calleeDdl != null) db.restoreOriginal(callee[0], callee[1], calleeDdl);
-                    } catch (DbgException ignored) {}
-                }
-
-                String freshDdl = db.fetchRoutineDdl(routine, routineType);
+                String freshDdl = debugger.stop(deployment);
+                deployment = null;
                 SwingUtilities.invokeLater(() -> {
                     hideBanner();
                     sourcePanel.clearCurrentLine();
@@ -735,7 +623,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     }
 
     private void resetAll() {
-        if (db == null) return;
+        if (debugger == null) return;
         int r = JOptionPane.showConfirmDialog(this,
             "<html>This will:<br>" +
             "• Restore <b>all</b> deployed routines to their original DDL<br>" +
@@ -746,7 +634,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         if (r != JOptionPane.YES_OPTION) return;
 
         stopSession();
-        deployedCallees.clear();
+        deployment = null;
         logPanel.clear();
         watchPanel.clearValues();
         watchPrev.clear();
@@ -757,12 +645,9 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         btnDeploy.setEnabled(false);
         setStatus("Resetting all debug changes…", false);
 
-        final String currentSchema = schema;
         RequestProcessor.getDefault().post(() -> {
             try {
-                db.restoreAll(currentSchema);
-                db.setupInfrastructure();
-                List<RoutineInfo> routines = db.fetchRoutines(currentSchema);
+                List<RoutineInfo> routines = debugger.reset();
                 SwingUtilities.invokeLater(() -> {
                     setAvailableRoutines(routines);
                     sourcePanel.setSource(null);
@@ -784,16 +669,9 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     public void componentClosed() {
         // When the window is closed (X button or programmatically), send 'continue'
         // to any blocked _dbg_checkpoint wait loops so they don't spin indefinitely.
-        if (session != null && db != null) {
-            final String sid     = session.sessionId;
-            final List<String[]> callees = new ArrayList<>(deployedCallees);
+        if (session != null && debugger != null) {
             stopSession();
-            RequestProcessor.getDefault().post(() -> {
-                try { db.updateState(sid, "continue"); } catch (DbgException ignored) {}
-                for (String[] callee : callees) {
-                    try { db.updateState(callee[2], "continue"); } catch (DbgException ignored) {}
-                }
-            });
+            RequestProcessor.getDefault().post(() -> debugger.unblock(deployment));
         } else {
             stopSession();
         }
@@ -803,8 +681,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
     private void startSession(String sid) {
         stopSession();
-        session = new DebugSession(sid, currentRoutine, db);
-        session.start(this, SwingUtilities::invokeLater);
+        session = debugger.openSession(currentRoutine, sid, this, SwingUtilities::invokeLater);
     }
 
     private void stopSession() {
@@ -819,8 +696,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         sourcePanel.clearCurrentLine();
         watchChanged.clear();
         watchPanel.clearChanged();
-        setCalleesStatus("running");
-        session.doContinue();
+        debugger.continueExecution(session, deployment);
         setPaused(false);
         setStatus("Resumed…", false);
     }
@@ -831,8 +707,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         sourcePanel.clearCurrentLine();
         watchChanged.clear();
         watchPanel.clearChanged();
-        setCalleesStatus("running");
-        session.doStep();
+        debugger.stepOver(session, deployment);
         setPaused(false);
         setStatus("Stepping over…", false);
     }
@@ -843,9 +718,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         sourcePanel.clearCurrentLine();
         watchChanged.clear();
         watchPanel.clearChanged();
-        setCalleesStatus("step");
-        for (String[] c : deployedCallees) session.registerChildSession(c[0], c[2]);
-        session.doStep();
+        debugger.stepInto(session, deployment);
         setPaused(false);
         setStatus("Stepping into…", false);
     }
@@ -856,7 +729,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         sourcePanel.clearCurrentLine();
         watchChanged.clear();
         watchPanel.clearChanged();
-        session.doContinue();
+        debugger.stepOut(session);
         setPaused(false);
         setStatus("Stepping out…", false);
     }
@@ -867,16 +740,9 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         sourcePanel.clearCurrentLine();
         watchChanged.clear();
         watchPanel.clearChanged();
-        session.doStep();
+        debugger.step(session);
         setPaused(false);
         setStatus("Stepping…", false);
-    }
-
-    private void setCalleesStatus(String status) {
-        for (String[] callee : deployedCallees) {
-            try { db.initSessionState(callee[2], callee[0], status); }
-            catch (DbgException ignored) {}
-        }
     }
 
     private void clearLog() {
@@ -887,12 +753,12 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     private void setDebugActive(boolean active) {
         debugActive = active;
         if (!isChild) {
-            btnDeploy.setEnabled(!active && db != null);
+            btnDeploy.setEnabled(!active && debugger != null);
             btnStop.setEnabled(active);
-            btnConnect.setVisible(db == null);
-            btnDisconnect.setVisible(db != null);
-            btnDisconnect.setEnabled(!active && db != null);
-            routineCombo.setEnabled(!active && db != null);
+            btnConnect.setVisible(debugger == null);
+            btnDisconnect.setVisible(debugger != null);
+            btnDisconnect.setEnabled(!active && debugger != null);
+            routineCombo.setEnabled(!active && debugger != null);
         }
     }
 
@@ -955,7 +821,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     @Override
     public void onCalleeStarted(String routineName, String sessionId) {
         // Already on the EDT (dispatched by SwingUtilities::invokeLater in DebugSession.poll)
-        DebuggerTopComponent child = createChildInstance(routineName, db, conn, schema, this);
+        DebuggerTopComponent child = createChildInstance(routineName, debugger, conn, schema, this);
 
         Mode m = WindowManager.getDefault().findMode("editor");
         if (m != null) m.dockInto(child);
@@ -967,16 +833,13 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         // populated before the first onPaused fires, so setCurrentLine finds content.
         RequestProcessor.getDefault().post(() -> {
             try {
-                String ddl  = db.loadOriginalDdl(routineName);
-                String type = db.loadOriginalType(routineName);
-                if (ddl == null && type != null) ddl = db.fetchRoutineDdl(routineName, type);
-                List<String> bps = db.loadBreakpoints(routineName);
-                final String finalDdl  = ddl;
-                final String finalType = type;
+                DeployedRoutine callee = deployment == null ? null : deployment.callees.stream()
+                    .filter(item -> item.name.equals(routineName)).findFirst().orElse(null);
+                if (callee == null) throw new DbgException("No deployed callee found for " + routineName);
                 SwingUtilities.invokeLater(() -> {
-                    if (finalType != null) child.currentRoutineType = finalType;
-                    child.sourcePanel.setSource(finalDdl);   // synchronous — doc ready now
-                    child.sourcePanel.setBreakpoints(bps);
+                    child.currentRoutineType = callee.type;
+                    child.sourcePanel.setSource(callee.ddl);   // synchronous — doc ready now
+                    child.sourcePanel.setBreakpoints(callee.breakpoints);
                     child.showBanner(routineName);
                     child.setDebugActive(true);
                     child.startSession(sessionId);           // first onPaused will find doc ready
@@ -1006,7 +869,4 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         setStatus(msg, false);
     }
 
-    private static String newSessionId() {
-        return UUID.randomUUID().toString().replace("-", "").substring(0, 14);
-    }
 }

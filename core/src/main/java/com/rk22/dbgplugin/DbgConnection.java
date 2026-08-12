@@ -120,8 +120,6 @@ public class DbgConnection {
         this.conn = conn;
     }
 
-    public Connection getConnection() { return conn; }
-
     // ── Infrastructure setup ──────────────────────────────────────────────────
 
     public synchronized void setupInfrastructure() throws DbgException {
@@ -176,6 +174,61 @@ public class DbgConnection {
             throw new DbgException("Could not determine current schema");
         } catch (SQLException e) {
             throw new DbgException("Failed to get schema: " + e.getMessage(), e);
+        }
+    }
+
+    /** Returns all metadata required to instrument and proxy a routine. */
+    RoutineMetadata fetchRoutineMetadata(String schema, String name, String type)
+            throws DbgException {
+        List<RoutineParameter> parameters = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT PARAMETER_NAME, DTD_IDENTIFIER, PARAMETER_MODE " +
+                "FROM information_schema.PARAMETERS " +
+                "WHERE SPECIFIC_SCHEMA=? AND SPECIFIC_NAME=? AND ORDINAL_POSITION>0 " +
+                "ORDER BY ORDINAL_POSITION")) {
+            ps.setString(1, schema);
+            ps.setString(2, name);
+            ResultSet rs = ps.executeQuery();
+            while (rs.next()) {
+                parameters.add(new RoutineParameter(
+                    rs.getString(1), rs.getString(2), rs.getString(3)));
+            }
+        } catch (SQLException e) {
+            throw new DbgException("Failed to fetch parameters for " + name + ": " + e.getMessage(), e);
+        }
+
+        String returnType = null;
+        boolean deterministic = false;
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT DTD_IDENTIFIER, IS_DETERMINISTIC " +
+                "FROM information_schema.ROUTINES " +
+                "WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
+            ps.setString(1, schema);
+            ps.setString(2, name);
+            ResultSet rs = ps.executeQuery();
+            if (rs.next()) {
+                returnType = rs.getString(1);
+                deterministic = "YES".equals(rs.getString(2));
+            }
+        } catch (SQLException e) {
+            throw new DbgException("Failed to fetch metadata for " + name + ": " + e.getMessage(), e);
+        }
+
+        return new RoutineMetadata(new RoutineInfo(name, type), parameters,
+            returnType, deterministic);
+    }
+
+    /** Returns PROCEDURE/FUNCTION, or null when no routine with this name exists. */
+    String findRoutineType(String schema, String name) throws DbgException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT ROUTINE_TYPE FROM information_schema.ROUTINES " +
+                "WHERE ROUTINE_SCHEMA=? AND ROUTINE_NAME=?")) {
+            ps.setString(1, schema);
+            ps.setString(2, name);
+            ResultSet rs = ps.executeQuery();
+            return rs.next() ? rs.getString(1) : null;
+        } catch (SQLException e) {
+            throw new DbgException("Failed to find routine type for " + name + ": " + e.getMessage(), e);
         }
     }
 
