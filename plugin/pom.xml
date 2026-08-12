@@ -12,7 +12,7 @@
 
     <artifactId>mysql-routine-debugger-netbeans</artifactId>
     <packaging>nbm</packaging>
-    <name>MySQL Routine Debugger - Plugin</name>
+    <name>MySQL Routine Debugger - NetBeans</name>
 
     <build>
         <plugins>
@@ -23,7 +23,7 @@
                 <extensions>true</extensions>
                 <configuration>
                     <cluster>extra</cluster>
-                    <moduleName>com.rk22.dbgplugin</moduleName>
+                    <moduleName>com.rk22.routinedebugger.netbeans</moduleName>
                     <requiresRestart>false</requiresRestart>
                 </configuration>
             </plugin>
@@ -37,43 +37,15 @@
                     </archive>
                 </configuration>
             </plugin>
-            <!-- Unpack core classes into the plugin JAR so all com.rk22.dbgplugin.* classes
-                 live in a single JAR — NB's module classloader resolves packages against one JAR
-                 and cannot find classes in the same package spread across ext/ JARs. -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-dependency-plugin</artifactId>
-                <version>3.6.0</version>
-                <executions>
-                    <execution>
-                        <id>unpack-core</id>
-                        <phase>prepare-package</phase>
-                        <goals><goal>unpack</goal></goals>
-                        <configuration>
-                            <artifactItems>
-                                <artifactItem>
-                                    <groupId>com.rk22</groupId>
-                                    <artifactId>mysql-routine-debugger-core</artifactId>
-                                    <version>${project.version}</version>
-                                    <outputDirectory>${project.build.outputDirectory}</outputDirectory>
-                                    <excludes>META-INF/**</excludes>
-                                </artifactItem>
-                            </artifactItems>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
 
     <dependencies>
-        <!-- Core module: provided so nbm-maven-plugin doesn't bundle it in ext/;
-             classes are merged into the plugin JAR by the unpack-core execution above. -->
+        <!-- Shared debugger backend, packaged as a regular module dependency. -->
         <dependency>
             <groupId>com.rk22</groupId>
             <artifactId>mysql-routine-debugger-core</artifactId>
             <version>${project.version}</version>
-            <scope>provided</scope>
         </dependency>
         <!-- NetBeans Platform -->
         <dependency>
