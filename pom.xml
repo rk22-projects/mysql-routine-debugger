@@ -12,7 +12,7 @@
 
     <modules>
         <module>core</module>
-        <module>plugin</module>
+        <module>netbeans</module>
         <module>standalone</module>
         <module>vscode</module>
     </modules>

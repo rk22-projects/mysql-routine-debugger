@@ -14,7 +14,7 @@ Issue reports and help with collaborative testing are very welcome. If you try t
 The debugger is available through three frontends, each with its own installation guide:
 
 - [Visual Studio Code extension](vscode/README.md)
-- [Apache NetBeans plugin](plugin/README.md)
+- [Apache NetBeans plugin](netbeans/README.md)
 - [Standalone JavaFX application](standalone/README.md)
 
 All three frontends provide the same core debugging workflow, so you can use the interface that best fits your development environment.
@@ -49,7 +49,7 @@ Use **Reset All Debug Changes** if an earlier session did not close normally.
 
 ```text
 core/        Shared database and debugger logic
-plugin/      Apache NetBeans frontend
+netbeans/    Apache NetBeans frontend
 standalone/  JavaFX frontend
 vscode/      Visual Studio Code frontend
 docs/        Documentation images and supporting files
