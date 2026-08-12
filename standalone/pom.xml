@@ -88,7 +88,7 @@
                 <artifactId>javafx-maven-plugin</artifactId>
                 <version>0.0.8</version>
                 <configuration>
-                    <mainClass>com.rk22.dbgplugin.standalone.App</mainClass>
+                    <mainClass>com.rk22.routinedebugger.standalone.App</mainClass>
                 </configuration>
             </plugin>
             <plugin>
@@ -114,7 +114,7 @@
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.rk22.dbgplugin.standalone.Launcher</mainClass>
+                                    <mainClass>com.rk22.routinedebugger.standalone.Launcher</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>
