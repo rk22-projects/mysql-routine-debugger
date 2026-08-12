@@ -48,6 +48,40 @@ public class DebuggerService {
             sessionId, db.loadBreakpoints(name));
     }
 
+    /**
+     * Reconstructs an existing debug deployment from the originals store.
+     * This is used when a frontend reconnects to, or reloads, a routine that
+     * was already deployed in an earlier UI session.
+     */
+    public DebugDeployment loadDeployment(String name, String type) throws DbgException {
+        DeployedRoutine root = loadDeployedRoutine(name, type);
+        if (root == null) return null;
+
+        List<DeployedRoutine> callees = new ArrayList<>();
+        for (String calleeName : InstrumentEngine.findCallees(root.ddl)) {
+            String calleeType = db.loadOriginalType(calleeName);
+            if (calleeType == null) continue;
+            DeployedRoutine callee = loadDeployedRoutine(calleeName, calleeType);
+            if (callee != null) callees.add(callee);
+        }
+        return new DebugDeployment(root, callees);
+    }
+
+    /** Loads one deployed routine without requiring a frontend-owned deployment cache. */
+    public DeployedRoutine loadDeployedRoutine(String name) throws DbgException {
+        String type = db.loadOriginalType(name);
+        return type == null ? null : loadDeployedRoutine(name, type);
+    }
+
+    private DeployedRoutine loadDeployedRoutine(String name, String type) throws DbgException {
+        String ddl = db.loadOriginalDdl(name);
+        if (ddl == null) return null;
+        String sessionId = db.loadSessionId(name);
+        if (sessionId == null)
+            throw new DbgException("Deployed routine has no saved session: " + name);
+        return new DeployedRoutine(name, type, sessionId, ddl, db.loadBreakpoints(name));
+    }
+
     public DebugDeployment deploy(String name, String type) throws DbgException {
         String rootDdl = db.fetchRoutineDdl(name, type);
         DeployedRoutine root = deployRoutine(name, type, rootDdl, "running");
@@ -133,27 +167,36 @@ public class DebuggerService {
 
     public DebugSession openSession(String routineName, String sessionId,
                                     DebugEventListener listener, Executor eventExecutor) {
+        return openSession(routineName, sessionId, null, listener, eventExecutor);
+    }
+
+    public DebugSession openSession(String routineName, String sessionId,
+                                    DebugDeployment deployment,
+                                    DebugEventListener listener, Executor eventExecutor) {
         DebugSession session = new DebugSession(sessionId, routineName, db);
-        session.start(listener, eventExecutor);
-        return session;
-    }
-
-    public void continueExecution(DebugSession session, DebugDeployment deployment) {
-        setCalleeStatus(deployment, "running");
-        session.doContinue();
-    }
-
-    public void stepOver(DebugSession session, DebugDeployment deployment) {
-        setCalleeStatus(deployment, "running");
-        session.doStep();
-    }
-
-    public void stepInto(DebugSession session, DebugDeployment deployment) {
-        setCalleeStatus(deployment, "step");
         if (deployment != null) {
             for (DeployedRoutine callee : deployment.callees)
                 session.registerChildSession(callee.name, callee.sessionId);
         }
+        session.start(listener, eventExecutor);
+        return session;
+    }
+
+    public void continueExecution(DebugSession session, DebugDeployment deployment) throws DbgException {
+        setCalleeStatus(resolveCallees(session, deployment), "running");
+        session.doContinue();
+    }
+
+    public void stepOver(DebugSession session, DebugDeployment deployment) throws DbgException {
+        setCalleeStatus(resolveCallees(session, deployment), "running");
+        session.doStep();
+    }
+
+    public void stepInto(DebugSession session, DebugDeployment deployment) throws DbgException {
+        List<DeployedRoutine> callees = resolveCallees(session, deployment);
+        setCalleeStatus(callees, "step");
+        for (DeployedRoutine callee : callees)
+            session.registerChildSession(callee.name, callee.sessionId);
         session.doStep();
     }
 
@@ -161,12 +204,29 @@ public class DebuggerService {
 
     public void stepOut(DebugSession session) { session.doContinue(); }
 
-    private void setCalleeStatus(DebugDeployment deployment, String status) {
-        if (deployment == null) return;
-        for (DeployedRoutine callee : deployment.callees) {
-            try { db.initSessionState(callee.sessionId, callee.name, status); }
-            catch (DbgException ignored) {}
+    private List<DeployedRoutine> resolveCallees(DebugSession session,
+                                                  DebugDeployment deployment) throws DbgException {
+        Map<String, DeployedRoutine> resolved = new LinkedHashMap<>();
+        if (deployment != null) {
+            for (DeployedRoutine callee : deployment.callees) resolved.put(callee.name, callee);
         }
+
+        String rootDdl = deployment == null ? null : deployment.root.ddl;
+        if (rootDdl == null) rootDdl = db.loadOriginalDdl(session.routineName);
+        if (rootDdl != null) {
+            for (String calleeName : InstrumentEngine.findCallees(rootDdl)) {
+                if (resolved.containsKey(calleeName)) continue;
+                DeployedRoutine callee = loadDeployedRoutine(calleeName);
+                if (callee != null) resolved.put(calleeName, callee);
+            }
+        }
+        return List.copyOf(resolved.values());
+    }
+
+    private void setCalleeStatus(Collection<DeployedRoutine> callees, String status)
+            throws DbgException {
+        for (DeployedRoutine callee : callees)
+            db.initSessionState(callee.sessionId, callee.name, status);
     }
 
     public void unblock(DebugDeployment deployment) {

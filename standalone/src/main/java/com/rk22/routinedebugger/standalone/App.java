@@ -1,5 +1,6 @@
 package com.rk22.routinedebugger.standalone;
 
+import com.rk22.routinedebugger.core.PersistentLogging;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.Scene;
@@ -21,6 +22,8 @@ public class App extends Application {
     }
 
     public static void main(String[] args) {
+        // Also covers IDE/javafx:run launches which bypass the fat-JAR Launcher.
+        PersistentLogging.initialize("standalone");
         launch(args);
     }
 }

@@ -4,6 +4,7 @@ import com.rk22.routinedebugger.core.SourceLineClassifier;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
+import javafx.scene.input.MouseButton;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
@@ -270,16 +271,21 @@ public class SourceView extends BorderPane {
         text.setFont(Font.font(FONT, bold ? javafx.scene.text.FontWeight.BOLD : javafx.scene.text.FontWeight.NORMAL, FONT_SZ));
         text.setFill(Color.web(color));
         if (identifier != null) {
-            text.setOnContextMenuRequested(e -> {
-                if (onAddWatch == null) return;
-                MenuItem add = new MenuItem("Add to Watch: " + identifier);
-                add.setOnAction(a -> onAddWatch.accept(identifier));
-                new ContextMenu(add).show(text, e.getScreenX(), e.getScreenY());
+            text.setOnMouseClicked(e -> {
+                if (e.getButton() != MouseButton.SECONDARY || onAddWatch == null) return;
+                showAddWatchMenu(text, identifier, e.getScreenX(), e.getScreenY());
+                e.consume();
             });
             String valueText = varValueLookup == null ? null : varValueLookup.apply(identifier);
             if (valueText != null) Tooltip.install(text, new Tooltip(identifier + " = " + valueText));
         }
         flow.getChildren().add(text);
+    }
+
+    private void showAddWatchMenu(Text owner, String identifier, double screenX, double screenY) {
+        MenuItem add = new MenuItem("Add to Watch: " + identifier);
+        add.setOnAction(e -> onAddWatch.accept(identifier));
+        new ContextMenu(add).show(owner, screenX, screenY);
     }
 
     // Prevent cells from being highlighted/selected on click (purely visual)

@@ -2,6 +2,7 @@ package com.rk22.routinedebugger.core;
 
 import com.rk22.routinedebugger.core.database.DbgConnection;
 import com.rk22.routinedebugger.core.database.RoutineMetadata;
+import com.rk22.routinedebugger.core.session.DebugSession;
 
 import org.junit.Test;
 
@@ -47,14 +48,54 @@ public class DebuggerServiceTest {
         assertEquals(Set.of("root", "child"), new HashSet<>(db.restored));
     }
 
+    @Test
+    public void loadDeploymentReconstructsDeployedCallees() throws Exception {
+        FakeDb db = new FakeDb();
+        db.originals.put("root", "CREATE PROCEDURE `root`() BEGIN CALL child(); END");
+        db.originals.put("child", "CREATE PROCEDURE `child`() BEGIN SELECT 1; END");
+        db.types.put("root", "PROCEDURE");
+        db.types.put("child", "PROCEDURE");
+        db.sessions.put("root", "root-session");
+        db.sessions.put("child", "child-session");
+
+        DebugDeployment deployment =
+            new DebuggerService(db, "app").loadDeployment("root", "PROCEDURE");
+
+        assertNotNull(deployment);
+        assertEquals("root-session", deployment.root.sessionId);
+        assertEquals(1, deployment.callees.size());
+        assertEquals("child", deployment.callees.get(0).name);
+        assertEquals("child-session", deployment.callees.get(0).sessionId);
+    }
+
+    @Test
+    public void stepIntoDiscoversCalleeWhenDeploymentCacheIsIncomplete() throws Exception {
+        FakeDb db = new FakeDb();
+        db.originals.put("root", "CREATE PROCEDURE `root`() BEGIN CALL child(); END");
+        db.originals.put("child", "CREATE PROCEDURE `child`() BEGIN SELECT 1; END");
+        db.types.put("child", "PROCEDURE");
+        db.sessions.put("child", "child-session");
+        DebugSession session = new DebugSession("root-session", "root", db);
+        DebugDeployment incomplete = new DebugDeployment(
+            new DeployedRoutine("root", "PROCEDURE", "root-session",
+                db.originals.get("root"), List.of()), List.of());
+
+        new DebuggerService(db, "app").stepInto(session, incomplete);
+
+        assertEquals("step", db.sessionStates.get("child-session"));
+        assertEquals("step", db.updatedStates.get("root-session"));
+    }
+
     private static final class FakeDb extends DbgConnection {
         final Map<String, String> ddl = new HashMap<>();
         final Map<String, String> types = new HashMap<>();
         final Map<String, String> originals = new HashMap<>();
+        final Map<String, String> sessions = new HashMap<>();
         final List<String> deployed = new ArrayList<>();
         final List<String> restored = new ArrayList<>();
         final List<String> unblocked = new ArrayList<>();
         final Map<String, String> sessionStates = new HashMap<>();
+        final Map<String, String> updatedStates = new HashMap<>();
 
         FakeDb() { super(null); }
 
@@ -90,11 +131,20 @@ public class DebuggerServiceTest {
         }
 
         @Override public void updateState(String sessionId, String status) {
+            updatedStates.put(sessionId, status);
             if ("continue".equals(status)) unblocked.add(sessionId);
         }
 
         @Override public String loadOriginalDdl(String name) {
             return originals.get(name);
+        }
+
+        @Override public String loadOriginalType(String name) {
+            return types.get(name);
+        }
+
+        @Override public String loadSessionId(String name) {
+            return sessions.get(name);
         }
 
         @Override public void restoreOriginal(String name, String type, String originalDdl) {

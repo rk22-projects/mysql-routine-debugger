@@ -2,6 +2,8 @@ package com.rk22.routinedebugger.standalone;
 
 import com.rk22.routinedebugger.core.*;
 import com.rk22.routinedebugger.core.database.DatabaseEngine;
+import com.rk22.routinedebugger.core.database.ConnectionProfile;
+import com.rk22.routinedebugger.core.database.ConnectionService;
 import com.rk22.routinedebugger.core.session.DebugSession;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
@@ -53,6 +55,7 @@ public class MainWindow implements DebugEventListener {
 
     // ── DB state ──────────────────────────────────────────────────────────────
     private Connection    conn;
+    private final ConnectionService connectionService = new ConnectionService();
     private DebuggerService debugger;
     private String        schema;
     private DebugSession  session;
@@ -263,14 +266,50 @@ public class MainWindow implements DebugEventListener {
         dlg.setHeaderText("Enter connection details");
         dlg.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
+        ConnectionProfile saved = connectionService.loadProfile();
         ComboBox<DatabaseEngine> engineF = new ComboBox<>();
         engineF.getItems().setAll(DatabaseEngine.values());
-        engineF.setValue(DatabaseEngine.MYSQL);
-        TextField hostF = field("localhost");
-        TextField portF = field("3306");
-        TextField userF = field("");
+        engineF.setValue(saved.engine());
+        TextField hostF = field(saved.host());
+        TextField portF = field(Integer.toString(saved.port()));
+        TextField userF = field(saved.user());
         PasswordField passF = new PasswordField();
-        TextField dbF = field("");
+        passF.setText(saved.password());
+        TextField dbF = field(saved.database());
+        Button discoverDb = new Button("…");
+        discoverDb.setTooltip(new Tooltip("Discover databases on this server"));
+        HBox databaseBox = new HBox(4, dbF, discoverDb);
+        HBox.setHgrow(dbF, Priority.ALWAYS);
+
+        discoverDb.setOnAction(e -> {
+            final ConnectionProfile profile;
+            try {
+                profile = connectionProfile(engineF, hostF, portF, userF, passF, dbF);
+            } catch (RuntimeException ex) {
+                showError("Invalid connection details", ex);
+                return;
+            }
+            discoverDb.setDisable(true);
+            bgExec.submit(() -> {
+                try {
+                    List<String> databases = connectionService.discoverDatabases(profile);
+                    Platform.runLater(() -> {
+                        discoverDb.setDisable(false);
+                        ChoiceDialog<String> choice = new ChoiceDialog<>(
+                            databases.contains(dbF.getText()) ? dbF.getText() : null, databases);
+                        choice.setTitle("Select database");
+                        choice.setHeaderText("Databases available on " + profile.host());
+                        choice.setContentText("Database:");
+                        choice.showAndWait().ifPresent(dbF::setText);
+                    });
+                } catch (SQLException ex) {
+                    Platform.runLater(() -> {
+                        discoverDb.setDisable(false);
+                        showError("Database discovery failed", ex);
+                    });
+                }
+            });
+        });
 
         GridPane grid = new GridPane();
         grid.setHgap(10); grid.setVgap(8); grid.setPadding(new Insets(16, 16, 16, 16));
@@ -279,22 +318,19 @@ public class MainWindow implements DebugEventListener {
         grid.addRow(2, lbl("Port:"), portF);
         grid.addRow(3, lbl("User:"), userF);
         grid.addRow(4, lbl("Password:"), passF);
-        grid.addRow(5, lbl("Database:"), dbF);
+        grid.addRow(5, lbl("Database:"), databaseBox);
         dlg.getDialogPane().setContent(grid);
 
         Optional<ButtonType> result = dlg.showAndWait();
         if (result.isEmpty() || result.get() != ButtonType.OK) return;
 
         try {
-            DatabaseEngine engine = engineF.getValue();
-            int port = Integer.parseInt(portF.getText().trim());
-            conn   = engine.connect(hostF.getText().trim(), port, dbF.getText().trim(),
-                                    userF.getText().trim(), passF.getText());
-            conn.setAutoCommit(true);
+            ConnectionProfile profile = connectionProfile(engineF, hostF, portF, userF, passF, dbF);
+            conn = connectionService.connect(profile);
             schema = dbF.getText().trim();
             debugger = new DebuggerService(conn, schema);
-        } catch (SQLException ex) {
-            showError("Connection failed: " + ex.getMessage());
+        } catch (Exception ex) {
+            showError("Connection failed", ex);
             return;
         }
 
@@ -308,9 +344,16 @@ public class MainWindow implements DebugEventListener {
                     setStatus("Connected to " + schema);
                 });
             } catch (DbgException ex) {
-                Platform.runLater(() -> showError("Setup failed: " + ex.getMessage()));
+                Platform.runLater(() -> showError("Setup failed", ex));
             }
         });
+    }
+
+    private static ConnectionProfile connectionProfile(ComboBox<DatabaseEngine> engine,
+            TextField host, TextField port, TextField user, PasswordField password, TextField database) {
+        return new ConnectionProfile(engine.getValue(), host.getText().trim(),
+            Integer.parseInt(port.getText().trim()), user.getText().trim(), password.getText(),
+            database.getText().trim());
     }
 
     private void disconnect() {
@@ -345,12 +388,7 @@ public class MainWindow implements DebugEventListener {
         bgExec.submit(() -> {
             try {
                 RoutineDetails loaded = debugger.loadRoutine(rName, rType);
-                if (loaded.deployed && loaded.sessionId != null) {
-                    deployment = new DebugDeployment(new DeployedRoutine(
-                        rName, rType, loaded.sessionId, loaded.ddl, loaded.breakpoints), List.of());
-                } else {
-                    deployment = null;
-                }
+                deployment = loaded.deployed ? debugger.loadDeployment(rName, rType) : null;
                 Platform.runLater(() -> {
                     sourceView.setSource(loaded.ddl);
                     sourceView.setBreakpoints(loaded.breakpoints);
@@ -365,7 +403,7 @@ public class MainWindow implements DebugEventListener {
                     setStatus("Loaded: " + rName);
                 });
             } catch (DbgException ex) {
-                Platform.runLater(() -> showError("Load failed: " + ex.getMessage()));
+                Platform.runLater(() -> showError("Load failed", ex));
             }
         });
     }
@@ -399,7 +437,7 @@ public class MainWindow implements DebugEventListener {
             } catch (Exception ex) {
                 Platform.runLater(() -> {
                     setDebugActive(false);
-                    showError("Deploy failed: " + ex.getMessage());
+                    showError("Deploy failed", ex);
                 });
             }
         });
@@ -427,7 +465,7 @@ public class MainWindow implements DebugEventListener {
             } catch (DbgException ex) {
                 Platform.runLater(() -> {
                     setDebugActive(true);
-                    showError("Stop failed: " + ex.getMessage());
+                    showError("Stop failed", ex);
                 });
             }
         });
@@ -467,7 +505,7 @@ public class MainWindow implements DebugEventListener {
             } catch (DbgException ex) {
                 Platform.runLater(() -> {
                     setDebugActive(false);
-                    showError("Reset failed: " + ex.getMessage());
+                    showError("Reset failed", ex);
                 });
             }
         });
@@ -477,7 +515,8 @@ public class MainWindow implements DebugEventListener {
 
     private void startSession(String sid) {
         stopSession();
-        session = debugger.openSession(currentRoutine, sid, this, Platform::runLater);
+        session = debugger.openSession(currentRoutine, sid,
+            isChild ? null : deployment, this, Platform::runLater);
     }
 
     private void stopSession() {
@@ -492,8 +531,13 @@ public class MainWindow implements DebugEventListener {
         sourceView.clearCurrentLine();
         watchChanged.clear();
         watchView.clearChanged();
-        if (isChild) debugger.stepOut(session);
-        else debugger.continueExecution(session, deployment);
+        try {
+            if (isChild) debugger.stepOut(session);
+            else debugger.continueExecution(session, deployment);
+        } catch (DbgException ex) {
+            showError("Continue failed", ex);
+            return;
+        }
         setPaused(false);
         setStatus("Resumed…");
     }
@@ -511,13 +555,17 @@ public class MainWindow implements DebugEventListener {
     private void doStepOver() {
         if (session == null || !session.isPaused()) return;
         sourceView.clearCurrentLine(); watchChanged.clear(); watchView.clearChanged();
-        debugger.stepOver(session, deployment); setPaused(false); setStatus("Stepping over…");
+        try { debugger.stepOver(session, deployment); }
+        catch (DbgException ex) { showError("Step Over failed", ex); return; }
+        setPaused(false); setStatus("Stepping over…");
     }
 
     private void doStepInto() {
         if (session == null || !session.isPaused()) return;
         sourceView.clearCurrentLine(); watchChanged.clear(); watchView.clearChanged();
-        debugger.stepInto(session, deployment); setPaused(false); setStatus("Stepping into…");
+        try { debugger.stepInto(session, deployment); }
+        catch (DbgException ex) { showError("Step Into failed", ex); return; }
+        setPaused(false); setStatus("Stepping into…");
     }
 
     private void doStepOut() {
@@ -590,8 +638,7 @@ public class MainWindow implements DebugEventListener {
         child.setStatus("Loading " + routineName + "…");
         bgExec.submit(() -> {
             try {
-                DeployedRoutine callee = deployment == null ? null : deployment.callees.stream()
-                    .filter(item -> item.name.equals(routineName)).findFirst().orElse(null);
+                DeployedRoutine callee = debugger.loadDeployedRoutine(routineName);
                 if (callee == null) throw new DbgException("No deployed callee found for " + routineName);
                 Platform.runLater(() -> {
                     child.currentRoutineType = callee.type;
@@ -601,7 +648,7 @@ public class MainWindow implements DebugEventListener {
                     child.setDebugActive(true);
                 });
             } catch (DbgException ex) {
-                Platform.runLater(() -> child.showError("Failed to load callee: " + ex.getMessage()));
+                Platform.runLater(() -> child.showError("Failed to load callee", ex));
             }
         });
     }
@@ -666,8 +713,17 @@ public class MainWindow implements DebugEventListener {
     }
 
     private void showError(String msg) {
+        LOG.warning(msg);
         new Alert(Alert.AlertType.ERROR, msg, ButtonType.OK).showAndWait();
         setStatus(msg);
+    }
+
+    private void showError(String context, Throwable error) {
+        String detail = error.getMessage();
+        String message = context + (detail == null || detail.isBlank() ? "" : ": " + detail);
+        LOG.log(Level.SEVERE, message, error);
+        new Alert(Alert.AlertType.ERROR, message, ButtonType.OK).showAndWait();
+        setStatus(message);
     }
 
     // ── Static helpers ────────────────────────────────────────────────────────

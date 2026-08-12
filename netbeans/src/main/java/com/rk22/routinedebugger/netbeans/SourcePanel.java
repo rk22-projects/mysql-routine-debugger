@@ -63,10 +63,12 @@ public class SourcePanel extends JPanel {
 
         // Right-click context menu
         textPane.addMouseListener(new MouseAdapter() {
-            @Override public void mousePressed(MouseEvent e) { maybeShowPopup(e); }
-            @Override public void mouseReleased(MouseEvent e) { maybeShowPopup(e); }
-            private void maybeShowPopup(MouseEvent e) {
-                if (!e.isPopupTrigger() || onAddWatch == null) return;
+            @Override public void mouseClicked(MouseEvent e) {
+                if (SwingUtilities.isRightMouseButton(e) || e.isPopupTrigger()) showPopup(e);
+            }
+
+            private void showPopup(MouseEvent e) {
+                if (onAddWatch == null) return;
                 String word = wordAtPoint(e.getPoint());
                 if (word == null) return;
                 JPopupMenu menu = new JPopupMenu();
@@ -203,10 +205,11 @@ public class SourcePanel extends JPanel {
     // ── Word at point (for right-click context menu) ──────────────────────────
 
     private String wordAtPoint(Point p) {
-        int pos = textPane.viewToModel(p);
+        int pos = textPane.viewToModel2D(p);
         try {
             String text = doc.getText(0, doc.getLength());
             if (pos < 0 || pos >= text.length()) return null;
+            if (!isWordChar(text.charAt(pos)) && pos > 0 && isWordChar(text.charAt(pos - 1))) pos--;
             int s = pos, e = pos;
             while (s > 0 && isWordChar(text.charAt(s - 1))) s--;
             while (e < text.length() && isWordChar(text.charAt(e))) e++;

@@ -2,6 +2,8 @@ package com.rk22.routinedebugger.netbeans;
 
 import com.rk22.routinedebugger.core.*;
 import com.rk22.routinedebugger.core.database.DatabaseEngine;
+import com.rk22.routinedebugger.core.database.ConnectionProfile;
+import com.rk22.routinedebugger.core.database.ConnectionService;
 import com.rk22.routinedebugger.core.session.DebugSession;
 
 import org.netbeans.api.db.explorer.DatabaseConnection;
@@ -16,7 +18,6 @@ import javax.swing.event.DocumentListener;
 import java.awt.*;
 import java.awt.event.*;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.*;
 import java.util.List;
@@ -38,6 +39,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
     // ── DB state ──────────────────────────────────────────────────────────────
     private Connection          conn;
+    private final ConnectionService connectionService = new ConnectionService();
     private DebuggerService     debugger;
     private String              schema;
     private DebugSession        session;
@@ -438,22 +440,54 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
     /** Show a simple connection dialog and connect manually. */
     private void promptConnect() {
+        ConnectionProfile saved = connectionService.loadProfile();
         JComboBox<DatabaseEngine> engineF = new JComboBox<>(DatabaseEngine.values());
-        JTextField hostF = new JTextField("localhost", 12);
-        JTextField portF = new JTextField("3306", 5);
-        JTextField userF = new JTextField(8);
+        engineF.setSelectedItem(saved.engine());
+        JTextField hostF = new JTextField(saved.host(), 12);
+        JTextField portF = new JTextField(Integer.toString(saved.port()), 5);
+        JTextField userF = new JTextField(saved.user(), 8);
         JPasswordField passF = new JPasswordField(8);
-        JTextField dbF   = new JTextField(10);
+        passF.setText(saved.password());
+        JTextField dbF   = new JTextField(saved.database(), 10);
+        JButton discoverDb = new JButton("…");
+        discoverDb.setToolTipText("Discover databases on this server");
+        JPanel databaseBox = new JPanel(new BorderLayout(4, 0));
+        databaseBox.add(dbF, BorderLayout.CENTER);
+        databaseBox.add(discoverDb, BorderLayout.EAST);
+        discoverDb.addActionListener(e -> {
+            final ConnectionProfile profile;
+            try {
+                profile = connectionProfile(engineF, hostF, portF, userF, passF, dbF);
+            } catch (RuntimeException ex) {
+                showError("Invalid connection details: " + ex.getMessage());
+                return;
+            }
+            discoverDb.setEnabled(false);
+            RequestProcessor.getDefault().post(() -> {
+                try {
+                    List<String> databases = connectionService.discoverDatabases(profile);
+                    SwingUtilities.invokeLater(() -> {
+                        discoverDb.setEnabled(true);
+                        Object selected = JOptionPane.showInputDialog(this,
+                            "Databases available on " + profile.host() + ":", "Select database",
+                            JOptionPane.PLAIN_MESSAGE, null, databases.toArray(), dbF.getText());
+                        if (selected != null) dbF.setText(selected.toString());
+                    });
+                } catch (SQLException ex) {
+                    SwingUtilities.invokeLater(() -> {
+                        discoverDb.setEnabled(true);
+                        showError("Database discovery failed: " + ex.getMessage());
+                    });
+                }
+            });
+        });
         Object[] msg = {"Database engine:", engineF, "Host:", hostF, "Port:", portF,
-                        "User:", userF, "Password:", passF, "Database:", dbF};
+                        "User:", userF, "Password:", passF, "Database:", databaseBox};
         int r = JOptionPane.showConfirmDialog(this, msg, "Connect to MySQL or MariaDB", JOptionPane.OK_CANCEL_OPTION);
         if (r != JOptionPane.OK_OPTION) return;
         try {
-            DatabaseEngine engine = (DatabaseEngine) engineF.getSelectedItem();
-            int port = Integer.parseInt(portF.getText().trim());
-            conn   = engine.connect(hostF.getText().trim(), port, dbF.getText().trim(),
-                                    userF.getText().trim(), new String(passF.getPassword()));
-            conn.setAutoCommit(true);
+            ConnectionProfile profile = connectionProfile(engineF, hostF, portF, userF, passF, dbF);
+            conn = connectionService.connect(profile);
             schema = dbF.getText().trim();
             debugger = new DebuggerService(conn, schema);
             ownsConnection = true;
@@ -476,30 +510,26 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         });
     }
 
+    private static ConnectionProfile connectionProfile(JComboBox<DatabaseEngine> engine,
+            JTextField host, JTextField port, JTextField user, JPasswordField password,
+            JTextField database) {
+        return new ConnectionProfile((DatabaseEngine) engine.getSelectedItem(), host.getText().trim(),
+            Integer.parseInt(port.getText().trim()), user.getText().trim(),
+            new String(password.getPassword()), database.getText().trim());
+    }
+
     /**
      * Opens a private debugger/control session from a NetBeans DB Explorer
      * connection.  Reusing getJDBCConnection() would deadlock as soon as the SQL
      * editor executes a routine that pauses: that physical connection is then
      * occupied by CALL and cannot also poll or update _dbg_state.
      */
-    private static Connection openDedicatedControlConnection(DatabaseConnection dbConn)
+    private Connection openDedicatedControlConnection(DatabaseConnection dbConn)
             throws Exception {
         String url = dbConn.getDatabaseURL();
-        if (url.startsWith("jdbc:mariadb:")) {
-            Class.forName("org.mariadb.jdbc.Driver");
-        } else if (url.startsWith("jdbc:mysql:")) {
-            Class.forName("com.mysql.cj.jdbc.Driver");
-        } else if (dbConn.getDriverClass() != null && !dbConn.getDriverClass().isBlank()) {
-            Class.forName(dbConn.getDriverClass());
-        }
-
         Properties properties = dbConn.getConnectionProperties();
-        if (properties == null) properties = new Properties();
-        String user = dbConn.getUser();
-        String password = dbConn.getPassword();
-        if (user != null) properties.setProperty("user", user);
-        if (password != null) properties.setProperty("password", password);
-        return DriverManager.getConnection(url, properties);
+        return connectionService.connectUrl(url, dbConn.getDriverClass(), properties,
+                                            dbConn.getUser(), dbConn.getPassword());
     }
 
     private void disconnect() {
@@ -539,12 +569,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         RequestProcessor.getDefault().post(() -> {
             try {
                 RoutineDetails loaded = debugger.loadRoutine(rName, rType);
-                if (loaded.deployed && loaded.sessionId != null) {
-                    deployment = new DebugDeployment(new DeployedRoutine(
-                        rName, rType, loaded.sessionId, loaded.ddl, loaded.breakpoints), List.of());
-                } else {
-                    deployment = null;
-                }
+                deployment = loaded.deployed ? debugger.loadDeployment(rName, rType) : null;
                 SwingUtilities.invokeLater(() -> {
                     sourcePanel.setSource(loaded.ddl);
                     sourcePanel.setBreakpoints(loaded.breakpoints);
@@ -685,7 +710,8 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
     private void startSession(String sid) {
         stopSession();
-        session = debugger.openSession(currentRoutine, sid, this, SwingUtilities::invokeLater);
+        session = debugger.openSession(currentRoutine, sid,
+            isChild ? null : deployment, this, SwingUtilities::invokeLater);
     }
 
     private void stopSession() {
@@ -700,7 +726,8 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         sourcePanel.clearCurrentLine();
         watchChanged.clear();
         watchPanel.clearChanged();
-        debugger.continueExecution(session, deployment);
+        try { debugger.continueExecution(session, deployment); }
+        catch (DbgException ex) { showError("Continue failed: " + ex.getMessage()); return; }
         setPaused(false);
         setStatus("Resumed…", false);
     }
@@ -711,7 +738,8 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         sourcePanel.clearCurrentLine();
         watchChanged.clear();
         watchPanel.clearChanged();
-        debugger.stepOver(session, deployment);
+        try { debugger.stepOver(session, deployment); }
+        catch (DbgException ex) { showError("Step Over failed: " + ex.getMessage()); return; }
         setPaused(false);
         setStatus("Stepping over…", false);
     }
@@ -722,7 +750,8 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         sourcePanel.clearCurrentLine();
         watchChanged.clear();
         watchPanel.clearChanged();
-        debugger.stepInto(session, deployment);
+        try { debugger.stepInto(session, deployment); }
+        catch (DbgException ex) { showError("Step Into failed: " + ex.getMessage()); return; }
         setPaused(false);
         setStatus("Stepping into…", false);
     }
@@ -837,8 +866,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         // populated before the first onPaused fires, so setCurrentLine finds content.
         RequestProcessor.getDefault().post(() -> {
             try {
-                DeployedRoutine callee = deployment == null ? null : deployment.callees.stream()
-                    .filter(item -> item.name.equals(routineName)).findFirst().orElse(null);
+                DeployedRoutine callee = debugger.loadDeployedRoutine(routineName);
                 if (callee == null) throw new DbgException("No deployed callee found for " + routineName);
                 SwingUtilities.invokeLater(() -> {
                     child.currentRoutineType = callee.type;
