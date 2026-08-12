@@ -7,8 +7,7 @@ import static org.junit.Assert.assertEquals;
 public class ConnectionProfileTest {
     @Test
     public void nullTextValuesAreNormalized() {
-        ConnectionProfile profile = new ConnectionProfile(null, null, 3306, null, null, null);
-        assertEquals(DatabaseEngine.MYSQL, profile.engine());
+        ConnectionProfile profile = new ConnectionProfile(null, 3306, null, null, null);
         assertEquals("localhost", profile.host());
         assertEquals("", profile.user());
         assertEquals("", profile.password());
@@ -17,6 +16,6 @@ public class ConnectionProfileTest {
 
     @Test(expected = IllegalArgumentException.class)
     public void invalidPortsAreRejected() {
-        new ConnectionProfile(DatabaseEngine.MYSQL, "localhost", 70000, "user", "secret", "db");
+        new ConnectionProfile("localhost", 70000, "user", "secret", "db");
     }
 }

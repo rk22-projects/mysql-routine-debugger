@@ -477,6 +477,41 @@ public class DbgConnection {
 
     // ── Full reset ────────────────────────────────────────────────────────────
 
+    /** Finds backed-up or generated routines left by an interrupted debugger. */
+    public synchronized List<RoutineInfo> findLeftoverRoutines(String schema) throws DbgException {
+        Map<String, RoutineInfo> found = new LinkedHashMap<>();
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(
+                 "SELECT routine_name, routine_type FROM _dbg_originals ORDER BY routine_name")) {
+            while (rs.next()) {
+                String name = rs.getString(1);
+                found.put(name, new RoutineInfo(name, rs.getString(2)));
+            }
+        } catch (SQLException e) {
+            throw new DbgException("Failed to inspect saved routine originals: " + e.getMessage(), e);
+        }
+
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT ROUTINE_NAME, ROUTINE_TYPE FROM information_schema.ROUTINES " +
+                "WHERE ROUTINE_SCHEMA = ? " +
+                "AND (LEFT(ROUTINE_NAME, 5) = '_dbg_' OR LEFT(ROUTINE_NAME, 6) = '_orig_') " +
+                "AND ROUTINE_NAME NOT IN ('_dbg_checkpoint', '_dbg_log_var') " +
+                "ORDER BY ROUTINE_NAME")) {
+            ps.setString(1, schema);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String generated = rs.getString(1);
+                    String name = generated.startsWith("_orig_")
+                        ? generated.substring(6) : generated.substring(5);
+                    found.putIfAbsent(name, new RoutineInfo(name, rs.getString(2)));
+                }
+            }
+        } catch (SQLException e) {
+            throw new DbgException("Failed to inspect generated debug routines: " + e.getMessage(), e);
+        }
+        return List.copyOf(found.values());
+    }
+
     /**
      * Reverts every deployed routine to its original DDL, drops all _dbg_* and
      * _orig_* routines, and tears down the entire debug infrastructure.

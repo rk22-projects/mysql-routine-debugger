@@ -19,7 +19,6 @@
 
     <properties>
         <nb.version>RELEASE270</nb.version>
-        <mariadb.connector.version>3.5.3</mariadb.connector.version>
         <mysql.connector.version>9.3.0</mysql.connector.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>

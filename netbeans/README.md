@@ -7,7 +7,7 @@ Issue reports and help with collaborative testing are very welcome. If you try t
 
 This module integrates the MySQL Routine Debugger into Apache NetBeans. It adds a debugger window for MySQL and MariaDB stored procedures and functions, plus actions in the Database Explorer for opening routines in the debugger.
 
-The frontend supports breakpoints, Continue, Step Into, Step Over, Step Out, variable watches, and execution logs. It uses NetBeans database connections and includes the MySQL and MariaDB JDBC drivers.
+The frontend supports breakpoints, Continue, Step Into, Step Over, Step Out, variable watches, and execution logs. It uses NetBeans database connections and MySQL Connector/J for both MySQL and compatible MariaDB servers.
 
 ## Requirements
 

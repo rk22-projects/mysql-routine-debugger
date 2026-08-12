@@ -286,10 +286,7 @@ function renderToolbar() {
   $('step-out').disabled = !state.paused || !inCallee;
   $('step').disabled = !state.paused;
   $('connect').classList.toggle('hidden', state.connected);
-  $('disconnect').classList.toggle('hidden', !state.connected);
   $('connect').disabled = state.active;
-  $('disconnect').disabled = state.active;
-  $('disconnect').title = state.active ? 'Stop debugging before disconnecting' : `Disconnect from ${state.schema || 'database'}`;
   const banner = $('banner');
   banner.classList.toggle('hidden', !state.active);
   banner.textContent = state.active ? `▶ Debug active — call ${state.rootRoutineName || ''}(…) normally in your SQL client` : '';
@@ -307,7 +304,6 @@ window.addEventListener('message', event => {
   }
   if (message.type === 'showConnection') {
     const c = message.connection || {};
-    $('db-engine').value = c.engine || 'mysql';
     $('db-host').value = c.host || 'localhost'; $('db-port').value = c.port || 3306;
     $('db-user').value = c.user || ''; $('db-database').value = c.database || ''; $('db-password').value = '';
     $('connection-error').textContent = ''; $('connection-dialog').showModal();
@@ -321,7 +317,6 @@ window.addEventListener('message', event => {
 });
 
 $('connect').addEventListener('click', () => post('showConnection'));
-$('disconnect').addEventListener('click', () => post('disconnect'));
 $('routine').addEventListener('focus', () => openRoutineOptions(true));
 $('routine').addEventListener('input', () => openRoutineOptions(false));
 $('routine').addEventListener('keydown', event => {
@@ -363,7 +358,7 @@ $('connection-form').addEventListener('submit', event => {
   if (event.submitter?.value === 'cancel') return;
   event.preventDefault();
   $('connection-error').textContent = '';
-  post('connect', { connection: { engine: $('db-engine').value, host: $('db-host').value.trim(), port: Number($('db-port').value), user: $('db-user').value.trim(), password: $('db-password').value, database: $('db-database').value.trim() } });
+  post('connect', { connection: { host: $('db-host').value.trim(), port: Number($('db-port').value), user: $('db-user').value.trim(), password: $('db-password').value, database: $('db-database').value.trim() } });
 });
 document.addEventListener('contextmenu', event => {
   const identifier = event.target.closest('.identifier');

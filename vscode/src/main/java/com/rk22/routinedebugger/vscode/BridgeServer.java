@@ -2,6 +2,7 @@ package com.rk22.routinedebugger.vscode;
 
 import com.rk22.routinedebugger.core.*;
 import com.rk22.routinedebugger.core.database.DatabaseEngine;
+import com.rk22.routinedebugger.core.database.ConnectionService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -18,6 +19,7 @@ import java.util.*;
  */
 public final class BridgeServer implements AutoCloseable {
     private final ObjectMapper json = new ObjectMapper();
+    private final ConnectionService connectionService = new ConnectionService();
     private Connection connection;
     private DebuggerService debugger;
     private String schema;
@@ -81,15 +83,15 @@ public final class BridgeServer implements AutoCloseable {
         close();
         String host = p.path("host").asText("localhost");
         int port = p.path("port").asInt(3306);
-        DatabaseEngine engine = DatabaseEngine.fromId(p.path("engine").asText("mysql"));
         schema = text(p, "database");
-        connection = engine.connect(host, port, schema, text(p, "user"), p.path("password").asText());
+        connection = DatabaseEngine.MYSQL.connect(host, port, schema, text(p, "user"), p.path("password").asText());
         connection.setAutoCommit(true);
         debugger = new DebuggerService(connection, schema);
         ObjectNode result = json.createObjectNode();
         result.put("schema", schema);
-        result.put("engine", engine.id());
-        result.set("routines", json.valueToTree(debugger.initialize()));
+        StartupResult startup = debugger.initializeWithRecovery();
+        result.set("routines", json.valueToTree(startup.routines()));
+        result.set("recoveredRoutines", json.valueToTree(startup.recoveredRoutines()));
         return result;
     }
 
@@ -193,16 +195,14 @@ public final class BridgeServer implements AutoCloseable {
         return root.getMessage() == null ? root.toString() : root.getMessage();
     }
 
-    @Override public void close() throws SQLException {
-        if (debugger != null && deployment != null) {
-            try { debugger.stop(deployment); }
-            catch (Exception ignored) {}
-        }
+    @Override public void close() throws DbgException {
+        DebuggerService closingDebugger = debugger;
+        DebugDeployment closingDeployment = deployment;
+        Connection closingConnection = connection;
         debugger = null;
         schema = null;
         deployment = null;
-        if (connection != null) {
-            try { connection.close(); } finally { connection = null; }
-        }
+        connection = null;
+        connectionService.shutdown(closingDebugger, closingDeployment, closingConnection);
     }
 }

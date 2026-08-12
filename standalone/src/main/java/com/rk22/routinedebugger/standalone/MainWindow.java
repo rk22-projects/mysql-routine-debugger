@@ -1,7 +1,6 @@
 package com.rk22.routinedebugger.standalone;
 
 import com.rk22.routinedebugger.core.*;
-import com.rk22.routinedebugger.core.database.DatabaseEngine;
 import com.rk22.routinedebugger.core.database.ConnectionProfile;
 import com.rk22.routinedebugger.core.database.ConnectionService;
 import com.rk22.routinedebugger.core.session.DebugSession;
@@ -38,7 +37,6 @@ public class MainWindow implements DebugEventListener {
     private final BorderPane root      = new BorderPane();
     private final ComboBox<RoutineInfo> routineCombo = new ComboBox<>();
     private final Button btnConnect    = btn("Connect",       "#E0E0E0", "#333333");
-    private final Button btnDisconnect = btn("Disconnect",    "#E0E0E0", "#333333");
     private final Button btnDeploy  = btn("▶ Debug",       "#276749", "white");
     private final Button btnStop    = btn("■ Stop",        "#C0392B", "white");
     private final Button btnCont    = btn("▶ Continue F5", "#0E639C", "white");
@@ -125,7 +123,7 @@ public class MainWindow implements DebugEventListener {
             toolbar = new ToolBar(btnCont, btnStep, btnStepOut);
         } else {
             toolbar = new ToolBar(
-                btnConnect, btnDisconnect, sep(), routineCombo,
+                btnConnect, sep(), routineCombo,
                 btnDeploy, btnStop, sep(), btnCont, btnStep, btnStepInto,
                 new Pane() {{ HBox.setHgrow(this, Priority.ALWAYS); }}, overflowMenu());
         }
@@ -137,8 +135,6 @@ public class MainWindow implements DebugEventListener {
         btnStep  .setDisable(true);
         btnStepInto.setDisable(true);
         btnStepOut.setDisable(true);
-        btnDisconnect.setVisible(false);
-        btnDisconnect.setManaged(false);
         routineCombo.setDisable(true);
 
         // Banner
@@ -182,7 +178,6 @@ public class MainWindow implements DebugEventListener {
 
     private void wireActions() {
         btnConnect.setOnAction(e -> promptConnect());
-        btnDisconnect.setOnAction(e -> disconnect());
         btnDeploy.setOnAction(e -> deployDebug());
         btnStop  .setOnAction(e -> stopDebugging());
         btnCont  .setOnAction(e -> doContinue());
@@ -262,14 +257,11 @@ public class MainWindow implements DebugEventListener {
     private void promptConnect() {
         if (debugActive) { showError("Stop the active debug session before changing the connection."); return; }
         Dialog<ButtonType> dlg = new Dialog<>();
-        dlg.setTitle("Connect to MySQL or MariaDB");
+        dlg.setTitle("Connect to MySQL-compatible server");
         dlg.setHeaderText("Enter connection details");
         dlg.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
         ConnectionProfile saved = connectionService.loadProfile();
-        ComboBox<DatabaseEngine> engineF = new ComboBox<>();
-        engineF.getItems().setAll(DatabaseEngine.values());
-        engineF.setValue(saved.engine());
         TextField hostF = field(saved.host());
         TextField portF = field(Integer.toString(saved.port()));
         TextField userF = field(saved.user());
@@ -284,7 +276,7 @@ public class MainWindow implements DebugEventListener {
         discoverDb.setOnAction(e -> {
             final ConnectionProfile profile;
             try {
-                profile = connectionProfile(engineF, hostF, portF, userF, passF, dbF);
+                profile = connectionProfile(hostF, portF, userF, passF, dbF);
             } catch (RuntimeException ex) {
                 showError("Invalid connection details", ex);
                 return;
@@ -313,19 +305,18 @@ public class MainWindow implements DebugEventListener {
 
         GridPane grid = new GridPane();
         grid.setHgap(10); grid.setVgap(8); grid.setPadding(new Insets(16, 16, 16, 16));
-        grid.addRow(0, lbl("Database engine:"), engineF);
-        grid.addRow(1, lbl("Host:"), hostF);
-        grid.addRow(2, lbl("Port:"), portF);
-        grid.addRow(3, lbl("User:"), userF);
-        grid.addRow(4, lbl("Password:"), passF);
-        grid.addRow(5, lbl("Database:"), databaseBox);
+        grid.addRow(0, lbl("Host:"), hostF);
+        grid.addRow(1, lbl("Port:"), portF);
+        grid.addRow(2, lbl("User:"), userF);
+        grid.addRow(3, lbl("Password:"), passF);
+        grid.addRow(4, lbl("Database:"), databaseBox);
         dlg.getDialogPane().setContent(grid);
 
         Optional<ButtonType> result = dlg.showAndWait();
         if (result.isEmpty() || result.get() != ButtonType.OK) return;
 
         try {
-            ConnectionProfile profile = connectionProfile(engineF, hostF, portF, userF, passF, dbF);
+            ConnectionProfile profile = connectionProfile(hostF, portF, userF, passF, dbF);
             conn = connectionService.connect(profile);
             schema = dbF.getText().trim();
             debugger = new DebuggerService(conn, schema);
@@ -337,11 +328,12 @@ public class MainWindow implements DebugEventListener {
         setStatus("Connecting…");
         bgExec.submit(() -> {
             try {
-                List<RoutineInfo> routines = debugger.initialize();
+                StartupResult startup = debugger.initializeWithRecovery();
                 Platform.runLater(() -> {
-                    setAvailableRoutines(routines);
+                    setAvailableRoutines(startup.routines());
                     setDebugActive(false);
                     setStatus("Connected to " + schema);
+                    showStartupRecovery(startup);
                 });
             } catch (DbgException ex) {
                 Platform.runLater(() -> showError("Setup failed", ex));
@@ -349,27 +341,10 @@ public class MainWindow implements DebugEventListener {
         });
     }
 
-    private static ConnectionProfile connectionProfile(ComboBox<DatabaseEngine> engine,
-            TextField host, TextField port, TextField user, PasswordField password, TextField database) {
-        return new ConnectionProfile(engine.getValue(), host.getText().trim(),
-            Integer.parseInt(port.getText().trim()), user.getText().trim(), password.getText(),
-            database.getText().trim());
-    }
-
-    private void disconnect() {
-        if (debugActive) { showError("Stop the active debug session before disconnecting."); return; }
-        stopSession();
-        try { if (conn != null) conn.close(); } catch (SQLException ignored) {}
-        conn = null; debugger = null; schema = null; deployment = null;
-        availableRoutines.clear();
-        filteringRoutines = true;
-        routineCombo.getItems().clear(); routineCombo.setValue(null); routineCombo.getEditor().clear();
-        filteringRoutines = false;
-        currentRoutine = null; currentRoutineType = null;
-        sourceView.setSource(null); logView.clear(); watchView.clearValues();
-        watchPrev.clear(); watchChanged.clear(); hideBanner();
-        setDebugActive(false);
-        setStatus("Disconnected");
+    private static ConnectionProfile connectionProfile(TextField host, TextField port,
+            TextField user, PasswordField password, TextField database) {
+        return new ConnectionProfile(host.getText().trim(), Integer.parseInt(port.getText().trim()),
+            user.getText().trim(), password.getText(), database.getText().trim());
     }
 
     // ── Load routine ──────────────────────────────────────────────────────────
@@ -663,11 +638,20 @@ public class MainWindow implements DebugEventListener {
     public void onClose() {
         if (session != null && debugger != null)
             try { debugger.updateSessionState(session.sessionId, "continue"); } catch (DbgException ignored) {}
-        if (!isChild && debugger != null) debugger.unblock(deployment);
         sourceView.refreshValues();
         stopSession();
         bgExec.shutdownNow();
-        if (!isChild) try { if (conn != null) conn.close(); } catch (SQLException ignored) {}
+        if (!isChild) {
+            try {
+                connectionService.shutdown(debugger, deployment, conn);
+            } catch (DbgException ex) {
+                LOG.log(Level.SEVERE, "Debugger shutdown failed", ex);
+            } finally {
+                conn = null;
+                debugger = null;
+                deployment = null;
+            }
+        }
     }
 
     // ── UI helpers ────────────────────────────────────────────────────────────
@@ -678,8 +662,6 @@ public class MainWindow implements DebugEventListener {
         btnStop  .setDisable(!active);
         if (!isChild) {
             btnConnect.setVisible(debugger == null); btnConnect.setManaged(debugger == null);
-            btnDisconnect.setVisible(debugger != null); btnDisconnect.setManaged(debugger != null);
-            btnDisconnect.setDisable(active || debugger == null);
             routineCombo.setDisable(active || debugger == null);
         }
     }
@@ -716,6 +698,19 @@ public class MainWindow implements DebugEventListener {
         LOG.warning(msg);
         new Alert(Alert.AlertType.ERROR, msg, ButtonType.OK).showAndWait();
         setStatus(msg);
+    }
+
+    private void showStartupRecovery(StartupResult startup) {
+        if (!startup.recoveredAnything()) return;
+        String names = startup.recoveredRoutines().stream().map(r -> r.name).sorted()
+            .collect(java.util.stream.Collectors.joining(", "));
+        Alert alert = new Alert(Alert.AlertType.WARNING,
+            "A previous debug session left debugger artifacts behind. Saved original DDL was restored " +
+            "and orphaned generated routines were removed for:\n\n" + names,
+            ButtonType.OK);
+        alert.setTitle("Previous debug session recovered");
+        alert.setHeaderText("Startup cleanup completed");
+        alert.showAndWait();
     }
 
     private void showError(String context, Throwable error) {

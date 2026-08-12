@@ -13,6 +13,20 @@ import static org.junit.Assert.*;
 public class DebuggerServiceTest {
 
     @Test
+    public void startupRestoresAndReportsLeftoversBeforeListingRoutines() throws Exception {
+        FakeDb db = new FakeDb();
+        db.leftovers.add(new RoutineInfo("abandoned", "PROCEDURE"));
+        db.routines.add(new RoutineInfo("ready", "PROCEDURE"));
+
+        StartupResult result = new DebuggerService(db, "app").initializeWithRecovery();
+
+        assertEquals(List.of("abandoned"), result.recoveredRoutines().stream().map(r -> r.name).toList());
+        assertEquals(List.of("ready"), result.routines().stream().map(r -> r.name).toList());
+        assertEquals(1, db.restoreAllCount);
+        assertEquals(2, db.setupCount);
+    }
+
+    @Test
     public void deployOwnsRootAndCalleeWorkflow() throws Exception {
         FakeDb db = new FakeDb();
         db.ddl.put("root", "CREATE PROCEDURE `root`()\nBEGIN\n  CALL child();\nEND");
@@ -46,6 +60,27 @@ public class DebuggerServiceTest {
         assertEquals(db.ddl.get("root"), restored);
         assertEquals(Set.of("root-session", "child-session"), new HashSet<>(db.unblocked));
         assertEquals(Set.of("root", "child"), new HashSet<>(db.restored));
+    }
+
+    @Test
+    public void stopAttemptsEveryRestoreAndReportsFailures() throws Exception {
+        FakeDb db = new FakeDb();
+        db.ddl.put("root", "CREATE PROCEDURE root() SELECT 1");
+        db.originals.put("root", db.ddl.get("root"));
+        db.originals.put("broken", "CREATE PROCEDURE broken() SELECT 1");
+        db.originals.put("healthy", "CREATE PROCEDURE healthy() SELECT 1");
+        db.failRestore.add("broken");
+        DebugDeployment deployment = new DebugDeployment(
+            new DeployedRoutine("root", "PROCEDURE", "root-session", db.ddl.get("root"), List.of()),
+            List.of(
+                new DeployedRoutine("broken", "PROCEDURE", "broken-session", db.originals.get("broken"), List.of()),
+                new DeployedRoutine("healthy", "PROCEDURE", "healthy-session", db.originals.get("healthy"), List.of())));
+
+        DbgException failure = assertThrows(DbgException.class,
+            () -> new DebuggerService(db, "app").stop(deployment));
+
+        assertEquals(1, failure.getSuppressed().length);
+        assertEquals(Set.of("root", "healthy"), new HashSet<>(db.restored));
     }
 
     @Test
@@ -94,10 +129,30 @@ public class DebuggerServiceTest {
         final List<String> deployed = new ArrayList<>();
         final List<String> restored = new ArrayList<>();
         final List<String> unblocked = new ArrayList<>();
+        final Set<String> failRestore = new HashSet<>();
+        final List<RoutineInfo> leftovers = new ArrayList<>();
+        final List<RoutineInfo> routines = new ArrayList<>();
+        int setupCount;
+        int restoreAllCount;
         final Map<String, String> sessionStates = new HashMap<>();
         final Map<String, String> updatedStates = new HashMap<>();
 
         FakeDb() { super(null); }
+
+        @Override public void setupInfrastructure() { setupCount++; }
+
+        @Override public List<RoutineInfo> findLeftoverRoutines(String schema) {
+            return List.copyOf(leftovers);
+        }
+
+        @Override public void restoreAll(String schema) {
+            restoreAllCount++;
+            leftovers.clear();
+        }
+
+        @Override public List<RoutineInfo> fetchRoutines(String schema) {
+            return List.copyOf(routines);
+        }
 
         @Override public String fetchRoutineDdl(String name, String type) {
             return ddl.get(name);
@@ -147,7 +202,8 @@ public class DebuggerServiceTest {
             return sessions.get(name);
         }
 
-        @Override public void restoreOriginal(String name, String type, String originalDdl) {
+        @Override public void restoreOriginal(String name, String type, String originalDdl) throws DbgException {
+            if (failRestore.contains(name)) throw new DbgException("Restore failed for " + name);
             restored.add(name);
             originals.remove(name);
         }

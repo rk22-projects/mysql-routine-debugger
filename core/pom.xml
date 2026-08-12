@@ -15,12 +15,7 @@
     <name>MySQL Routine Debugger - Core</name>
 
     <dependencies>
-        <!-- Runtime drivers for both supported connection schemes. -->
-        <dependency>
-            <groupId>org.mariadb.jdbc</groupId>
-            <artifactId>mariadb-java-client</artifactId>
-            <version>${mariadb.connector.version}</version>
-        </dependency>
+        <!-- MySQL Connector/J is also used for compatible MariaDB servers. -->
         <dependency>
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>

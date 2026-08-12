@@ -27,8 +27,20 @@ public class DebuggerService {
     }
 
     public List<RoutineInfo> initialize() throws DbgException {
+        return initializeWithRecovery().routines();
+    }
+
+    /** Detects and restores artifacts left by an interrupted frontend session. */
+    public StartupResult initializeWithRecovery() throws DbgException {
+        // setupInfrastructure ensures the recovery tables exist while preserving
+        // _dbg_originals, which is the durable source for original routine DDL.
         db.setupInfrastructure();
-        return db.fetchRoutines(schema);
+        List<RoutineInfo> recovered = db.findLeftoverRoutines(schema);
+        if (!recovered.isEmpty()) {
+            db.restoreAll(schema);
+            db.setupInfrastructure();
+        }
+        return new StartupResult(db.fetchRoutines(schema), recovered);
     }
 
     public List<RoutineInfo> listRoutines() throws DbgException {
@@ -123,11 +135,28 @@ public class DebuggerService {
     public String stop(DebugDeployment deployment) throws DbgException {
         if (deployment == null) throw new DbgException("No active debug deployment.");
         unblock(deployment);
-        String originalDdl = db.loadOriginalDdl(deployment.root.name);
-        if (originalDdl == null) throw new DbgException("No saved original found.");
-        db.restoreOriginal(deployment.root.name, deployment.root.type, originalDdl);
-        for (DeployedRoutine callee : deployment.callees) restoreQuietly(callee);
+        DbgException failure = null;
+        List<DeployedRoutine> routines = new ArrayList<>();
+        routines.add(deployment.root);
+        routines.addAll(deployment.callees);
+        for (DeployedRoutine routine : routines) {
+            try {
+                restore(routine);
+            } catch (DbgException ex) {
+                if (failure == null) failure = new DbgException("Failed to restore one or more routines.");
+                failure.addSuppressed(ex);
+            }
+        }
+        if (failure != null) throw failure;
         return db.fetchRoutineDdl(deployment.root.name, deployment.root.type);
+    }
+
+    private void restore(DeployedRoutine routine) throws DbgException {
+        db.updateState(routine.sessionId, "continue");
+        String ddl = db.loadOriginalDdl(routine.name);
+        if (ddl == null) ddl = routine.ddl;
+        if (ddl == null) throw new DbgException("No saved original found for " + routine.name + ".");
+        db.restoreOriginal(routine.name, routine.type, ddl);
     }
 
     private void restoreQuietly(DeployedRoutine routine) {

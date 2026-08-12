@@ -349,30 +349,35 @@ function activate(context) {
     const config = vscode.workspace.getConfiguration('mysqlRoutineDebugger');
     if (!connection) {
       const defaults = {
-        engine: config.get('engine', 'mysql'), host: config.get('host', 'localhost'), port: config.get('port', 3306),
+        host: config.get('host', 'localhost'), port: config.get('port', 3306),
         user: config.get('user', ''), database: config.get('database', '')
       };
       panel.webview.postMessage({ type: 'showConnection', connection: defaults });
       return;
     }
     const { host, user, database } = connection;
-    const engine = connection.engine || 'mysql';
     const portText = String(connection.port || 3306);
-    const secretKey = `mysqlRoutineDebugger:${engine}:${host}:${portText}:${database}:${user}`;
+    const secretKey = `mysqlRoutineDebugger:mysql:${host}:${portText}:${database}:${user}`;
     const password = connection.password || await context.secrets.get(secretKey) || '';
     setStatus('Connecting…');
-    const result = await bridge.request('connect', { engine, host, port: Number(portText), user, password, database });
+    const result = await bridge.request('connect', { host, port: Number(portText), user, password, database });
     await context.secrets.store(secretKey, password);
     await Promise.all([
-      config.update('engine', engine, vscode.ConfigurationTarget.Global),
       config.update('host', host, vscode.ConfigurationTarget.Global),
       config.update('port', Number(portText), vscode.ConfigurationTarget.Global),
       config.update('user', user, vscode.ConfigurationTarget.Global),
       config.update('database', database, vscode.ConfigurationTarget.Global)
     ]);
-    state.routines = result.routines || []; state.connected = true; state.schema = result.schema; state.engine = result.engine;
+    state.routines = result.routines || []; state.connected = true; state.schema = result.schema;
     await setContext('connected', true); setStatus(`Connected to ${result.schema}`);
     panel.webview.postMessage({ type: 'connected' });
+    if (result.recoveredRoutines?.length) {
+      const names = result.recoveredRoutines.map(routine => routine.name).sort().join(', ');
+      await vscode.window.showWarningMessage(
+        `A previous debug session left debugger artifacts behind. Saved original DDL was restored and orphaned generated routines were removed for: ${names}`,
+        { modal: true }
+      );
+    }
   }
 
   async function loadRoutine(routine) {
@@ -479,7 +484,7 @@ function activate(context) {
       <link rel="stylesheet" href="${style}"><title>MySQL Routine Debugger</title></head>
       <body>
         <header class="toolbar">
-          <button id="connect" class="secondary">Connect</button><button id="disconnect" class="secondary hidden">Disconnect</button><span class="separator"></span>
+          <button id="connect" class="secondary">Connect</button><span class="separator"></span>
           <div class="routine-combobox"><input id="routine" class="routine-picker" placeholder="Search or select a routine…" autocomplete="off" role="combobox" aria-autocomplete="list" aria-controls="routine-options" aria-expanded="false" aria-label="Routine"><button id="routine-toggle" class="routine-toggle" title="Show routines" tabindex="-1" aria-label="Show routines">⌄</button></div>
           <button id="debug" class="success">▶ Debug</button><button id="stop" class="danger">■ Stop</button>
           <span class="separator wide"></span><button id="continue" class="primary">▶ Continue <kbd>F5</kbd></button><button id="step-into" class="purple">↘ Step Into <kbd>F7</kbd></button><button id="step-out" class="purple hidden">↗ Step Out <kbd>Ctrl+F7</kbd></button><button id="step" class="purple">↓ Step Over <kbd>F8</kbd></button>
@@ -499,8 +504,8 @@ function activate(context) {
             </section>
           </aside>
         </main>
-        <dialog id="connection-dialog"><form id="connection-form" method="dialog"><h2>Connect to MySQL or MariaDB</h2>
-          <div class="connection-grid"><label class="full">Database engine<select id="db-engine"><option value="mysql">MySQL</option><option value="mariadb">MariaDB</option></select></label>
+        <dialog id="connection-dialog"><form id="connection-form" method="dialog"><h2>Connect to MySQL-compatible server</h2>
+          <div class="connection-grid">
           <label>Host<input id="db-host" required></label><label>Port<input id="db-port" type="number" required></label>
           <label>User<input id="db-user" required></label><label>Password<input id="db-password" type="password" placeholder="Use saved password"></label>
           <label class="full">Database / schema<input id="db-database" required></label></div>
@@ -519,7 +524,10 @@ function activate(context) {
     });
     panel.iconPath = vscode.Uri.joinPath(context.extensionUri, 'resources', 'database-debug.svg');
     panel.webview.html = webviewHtml(panel.webview);
-    panel.onDidDispose(() => { panel = undefined; }, null, context.subscriptions);
+    panel.onDidDispose(() => {
+      panel = undefined;
+      void closePanelConnection().catch(error => output.appendLine(`Close failed: ${error.message}`));
+    }, null, context.subscriptions);
     panel.webview.onDidReceiveMessage(async message => {
       try {
         switch (message.type) {
@@ -528,14 +536,13 @@ function activate(context) {
             if (!state.connected) {
               const config = vscode.workspace.getConfiguration('mysqlRoutineDebugger');
               panel.webview.postMessage({ type: 'showConnection', connection: {
-                engine: config.get('engine', 'mysql'), host: config.get('host', 'localhost'), port: config.get('port', 3306),
+                host: config.get('host', 'localhost'), port: config.get('port', 3306),
                 user: config.get('user', ''), database: config.get('database', '')
               }});
             }
             break;
           case 'showConnection': await connect(); break;
           case 'connect': await connect(message.connection); break;
-          case 'disconnect': await disconnect(); break;
           case 'load': await loadRoutine(state.routines.find(r => r.name.toLowerCase() === String(message.name).toLowerCase())); break;
           case 'deploy': await deploy(); break;
           case 'stop': await stop(); break;
@@ -561,20 +568,18 @@ function activate(context) {
   }
 
   const command = (name, handler) => context.subscriptions.push(vscode.commands.registerCommand(`mysqlRoutineDebugger.${name}`, (...args) => Promise.resolve(handler(...args)).catch(showError)));
-  async function disconnect() {
-    if (state.active) throw new Error('Stop the active debug session before disconnecting.');
+  async function closePanelConnection() {
     if (!state.connected) return;
     stopPolling();
     await bridge.request('disconnect');
-    state.connected = false; state.routines = []; state.routine = undefined; state.ddl = '';
+    state.connected = false; state.active = false; state.routines = []; state.routine = undefined; state.ddl = '';
     state.breakpoints = new Set(); state.watches = new Map(); state.watchAll = false; state.log = []; state.currentLine = -1;
     state.sessions = []; state.activeSessionId = undefined; state.resumingSessions.clear();
-    await setContext('connected', false); await setContext('loaded', false); await setContext('paused', false);
+    await setContext('connected', false); await setContext('loaded', false); await setContext('active', false); await setContext('paused', false);
     setStatus('Disconnected');
   }
   command('open', openPanel);
   command('connect', connect);
-  command('disconnect', disconnect);
   command('refresh', async () => { state.routines = await bridge.request('routines'); render(); });
   command('load', loadRoutine);
   command('deploy', deploy);

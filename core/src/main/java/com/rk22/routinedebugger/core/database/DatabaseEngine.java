@@ -1,16 +1,13 @@
 package com.rk22.routinedebugger.core.database;
 
 import java.sql.Connection;
-import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.util.Locale;
 import java.util.Properties;
 
-/** Supported database engines and their JDBC connection details. */
+/** The single JDBC engine used for MySQL and compatible MariaDB servers. */
 public enum DatabaseEngine {
-    MYSQL("mysql", "MySQL", "jdbc:mysql://"),
-    MARIADB("mariadb", "MariaDB", "jdbc:mariadb://");
+    MYSQL("mysql", "MySQL", "jdbc:mysql://");
 
     private final String id;
     private final String displayName;
@@ -43,23 +40,11 @@ public enum DatabaseEngine {
     }
 
     public static DatabaseEngine fromId(String value) {
-        if (value != null) {
-            String normalized = value.trim().toLowerCase(Locale.ROOT);
-            for (DatabaseEngine engine : values()) {
-                if (engine.id.equals(normalized) ||
-                    engine.displayName.toLowerCase(Locale.ROOT).equals(normalized)) {
-                    return engine;
-                }
-            }
-        }
         return MYSQL;
     }
 
     public static DatabaseEngine detect(Connection connection) throws SQLException {
-        DatabaseMetaData metadata = connection.getMetaData();
-        String product = metadata.getDatabaseProductName();
-        return product != null && product.toLowerCase(Locale.ROOT).contains("mariadb")
-            ? MARIADB : MYSQL;
+        return MYSQL;
     }
 
     @Override

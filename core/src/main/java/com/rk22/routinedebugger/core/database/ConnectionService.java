@@ -1,5 +1,8 @@
 package com.rk22.routinedebugger.core.database;
 
+import com.rk22.routinedebugger.core.DbgException;
+import com.rk22.routinedebugger.core.DebugDeployment;
+import com.rk22.routinedebugger.core.DebuggerService;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
@@ -52,9 +55,7 @@ public final class ConnectionService {
         }
         int port = preferences.getInt("port", 3306);
         if (port <= 0 || port > 65535) port = 3306;
-        return new ConnectionProfile(
-            DatabaseEngine.fromId(preferences.get("engine", "mysql")),
-            preferences.get("host", "localhost"),
+        return new ConnectionProfile(preferences.get("host", "localhost"),
             port,
             preferences.get("user", ""), password,
             preferences.get("database", ""));
@@ -62,7 +63,7 @@ public final class ConnectionService {
 
     /** Opens the connection and persists the profile only after authentication succeeds. */
     public Connection connect(ConnectionProfile profile) throws SQLException, IOException {
-        Connection connection = profile.engine().connect(profile.host(), profile.port(),
+        Connection connection = DatabaseEngine.MYSQL.connect(profile.host(), profile.port(),
             profile.database(), profile.user(), profile.password());
         try {
             connection.setAutoCommit(true);
@@ -77,7 +78,7 @@ public final class ConnectionService {
     /** Queries the server without selecting a catalog. */
     public List<String> discoverDatabases(ConnectionProfile profile) throws SQLException {
         List<String> databases = new ArrayList<>();
-        try (Connection connection = profile.engine().connect(profile.host(), profile.port(), "",
+        try (Connection connection = DatabaseEngine.MYSQL.connect(profile.host(), profile.port(), "",
                                                                profile.user(), profile.password());
              Statement statement = connection.createStatement();
              ResultSet rows = statement.executeQuery("SHOW DATABASES")) {
@@ -89,8 +90,9 @@ public final class ConnectionService {
     /** Core gateway used for dedicated connections supplied by IDE integrations. */
     public Connection connectUrl(String url, String driverClass, Properties sourceProperties,
                                  String user, String password) throws Exception {
-        if (url.startsWith("jdbc:mariadb:")) Class.forName("org.mariadb.jdbc.Driver");
-        else if (url.startsWith("jdbc:mysql:")) Class.forName("com.mysql.cj.jdbc.Driver");
+        if (url.startsWith("jdbc:mariadb:"))
+            url = "jdbc:mysql:" + url.substring("jdbc:mariadb:".length());
+        if (url.startsWith("jdbc:mysql:")) Class.forName("com.mysql.cj.jdbc.Driver");
         else if (driverClass != null && !driverClass.isBlank()) Class.forName(driverClass);
         Properties properties = new Properties();
         if (sourceProperties != null) properties.putAll(sourceProperties);
@@ -101,8 +103,34 @@ public final class ConnectionService {
         return connection;
     }
 
+    /**
+     * Performs the complete debugger shutdown sequence and always closes JDBC.
+     * Any restore failure is retained, with a close failure attached as suppressed.
+     */
+    public void shutdown(DebuggerService debugger, DebugDeployment deployment,
+                         Connection connection) throws DbgException {
+        DbgException failure = null;
+        try {
+            if (debugger != null && deployment != null) debugger.stop(deployment);
+        } catch (DbgException ex) {
+            failure = ex;
+        } finally {
+            if (connection != null) {
+                try {
+                    connection.close();
+                } catch (SQLException ex) {
+                    DbgException closeFailure = new DbgException(
+                        "Failed to close the database connection: " + ex.getMessage(), ex);
+                    if (failure == null) failure = closeFailure;
+                    else failure.addSuppressed(closeFailure);
+                }
+            }
+        }
+        if (failure != null) throw failure;
+    }
+
     private void saveProfile(ConnectionProfile profile) throws IOException {
-        preferences.put("engine", profile.engine().id());
+        preferences.remove("engine");
         preferences.put("host", profile.host());
         preferences.putInt("port", profile.port());
         preferences.put("user", profile.user());

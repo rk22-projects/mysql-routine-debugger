@@ -12,16 +12,14 @@ public class DatabaseEngineTest {
     }
 
     @Test
-    public void engineIdsAreCaseInsensitive() {
+    public void legacyEngineIdsAlwaysSelectMysqlConnector() {
         assertEquals(DatabaseEngine.MYSQL, DatabaseEngine.fromId("MySQL"));
-        assertEquals(DatabaseEngine.MARIADB, DatabaseEngine.fromId("MARIADB"));
+        assertEquals(DatabaseEngine.MYSQL, DatabaseEngine.fromId("MARIADB"));
     }
 
     @Test
     public void jdbcUrlsUseTheMatchingScheme() {
         assertEquals("jdbc:mysql://db.example:3306/app",
                      DatabaseEngine.MYSQL.jdbcUrl("db.example", 3306, "app"));
-        assertEquals("jdbc:mariadb://localhost:3307/test",
-                     DatabaseEngine.MARIADB.jdbcUrl("localhost", 3307, "test"));
     }
 }

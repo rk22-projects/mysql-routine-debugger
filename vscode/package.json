@@ -28,7 +28,6 @@
     "commands": [
       { "command": "mysqlRoutineDebugger.open", "title": "MySQL Routine Debugger: Open Debugger", "icon": "$(debug-console)" },
       { "command": "mysqlRoutineDebugger.connect", "title": "MySQL Routine Debugger: Connect", "icon": "$(plug)" },
-      { "command": "mysqlRoutineDebugger.disconnect", "title": "MySQL Routine Debugger: Disconnect" },
       { "command": "mysqlRoutineDebugger.refresh", "title": "MySQL Routine Debugger: Refresh Routines", "icon": "$(refresh)" },
       { "command": "mysqlRoutineDebugger.load", "title": "MySQL Routine Debugger: Open Routine" },
       { "command": "mysqlRoutineDebugger.deploy", "title": "MySQL Routine Debugger: Start Debugging", "icon": "$(debug-start)" },
@@ -61,7 +60,6 @@
     "configuration": {
       "title": "MySQL Routine Debugger",
       "properties": {
-        "mysqlRoutineDebugger.engine": { "type": "string", "enum": ["mysql", "mariadb"], "enumDescriptions": ["Connect using MySQL Connector/J.", "Connect using MariaDB Connector/J."], "default": "mysql", "description": "Database server type." },
         "mysqlRoutineDebugger.host": { "type": "string", "default": "localhost", "description": "Database server hostname." },
         "mysqlRoutineDebugger.port": { "type": "number", "default": 3306, "description": "Database server port." },
         "mysqlRoutineDebugger.user": { "type": "string", "default": "", "description": "Database user. Passwords are kept in VS Code secret storage." },

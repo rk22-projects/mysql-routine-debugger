@@ -1,7 +1,6 @@
 package com.rk22.routinedebugger.netbeans;
 
 import com.rk22.routinedebugger.core.*;
-import com.rk22.routinedebugger.core.database.DatabaseEngine;
 import com.rk22.routinedebugger.core.database.ConnectionProfile;
 import com.rk22.routinedebugger.core.database.ConnectionService;
 import com.rk22.routinedebugger.core.session.DebugSession;
@@ -52,7 +51,6 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     // ── UI ────────────────────────────────────────────────────────────────────
     private final JComboBox<RoutineInfo> routineCombo = new JComboBox<>();
     private final JButton btnConnect    = new JButton("Connect");
-    private final JButton btnDisconnect = new JButton("Disconnect");
     private final JButton btnDeploy  = new JButton("▶ Debug");
     private final JButton btnStop    = new JButton("■ Stop Debugging");
     private final JButton btnCont     = new JButton("▶ Continue  F5");
@@ -180,7 +178,6 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         routineCombo.setEditable(true);
 
         style(btnConnect,    new Color(0xE0, 0xE0, 0xE0), Color.DARK_GRAY);
-        style(btnDisconnect, new Color(0xE0, 0xE0, 0xE0), Color.DARK_GRAY);
         style(btnDeploy,   new Color(0x27, 0x67, 0x49), Color.WHITE);
         style(btnStop,     new Color(0xC0, 0x39, 0x2B), Color.WHITE);
         style(btnCont,     new Color(0x0E, 0x63, 0x9C), Color.WHITE);
@@ -192,11 +189,9 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         btnCont.setEnabled(false);
         btnStep.setEnabled(false);
         btnStepInto.setEnabled(false);
-        btnDisconnect.setVisible(false);
         routineCombo.setEnabled(false);
 
         btnPanel.add(btnConnect);
-        btnPanel.add(btnDisconnect);
         btnPanel.add(routineCombo);
         btnPanel.add(btnDeploy);
         btnPanel.add(btnStop);
@@ -293,7 +288,6 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
 
         if (!isChild) {
             btnConnect.addActionListener(e   -> promptConnect());
-            btnDisconnect.addActionListener(e -> disconnect());
             installRoutineSearch();
             btnDeploy.addActionListener(e    -> deployDebug());
             btnStop.addActionListener(e      -> stopDebugging());
@@ -416,11 +410,12 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         setStatus("Connecting…", false);
         RequestProcessor.getDefault().post(() -> {
             try {
-                List<RoutineInfo> routines = debugger.initialize();
+                StartupResult startup = debugger.initializeWithRecovery();
                 SwingUtilities.invokeLater(() -> {
-                    setAvailableRoutines(routines);
+                    setAvailableRoutines(startup.routines());
                     setStatus("Connected to " + schema, false);
                     setDebugActive(false);
+                    showStartupRecovery(startup);
                     if (routineName != null) {
                         for (int i = 0; i < routineCombo.getItemCount(); i++) {
                             if (routineCombo.getItemAt(i).name.equals(routineName)) {
@@ -441,8 +436,6 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     /** Show a simple connection dialog and connect manually. */
     private void promptConnect() {
         ConnectionProfile saved = connectionService.loadProfile();
-        JComboBox<DatabaseEngine> engineF = new JComboBox<>(DatabaseEngine.values());
-        engineF.setSelectedItem(saved.engine());
         JTextField hostF = new JTextField(saved.host(), 12);
         JTextField portF = new JTextField(Integer.toString(saved.port()), 5);
         JTextField userF = new JTextField(saved.user(), 8);
@@ -457,7 +450,7 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         discoverDb.addActionListener(e -> {
             final ConnectionProfile profile;
             try {
-                profile = connectionProfile(engineF, hostF, portF, userF, passF, dbF);
+                profile = connectionProfile(hostF, portF, userF, passF, dbF);
             } catch (RuntimeException ex) {
                 showError("Invalid connection details: " + ex.getMessage());
                 return;
@@ -481,12 +474,12 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
                 }
             });
         });
-        Object[] msg = {"Database engine:", engineF, "Host:", hostF, "Port:", portF,
+        Object[] msg = {"Host:", hostF, "Port:", portF,
                         "User:", userF, "Password:", passF, "Database:", databaseBox};
-        int r = JOptionPane.showConfirmDialog(this, msg, "Connect to MySQL or MariaDB", JOptionPane.OK_CANCEL_OPTION);
+        int r = JOptionPane.showConfirmDialog(this, msg, "Connect to MySQL-compatible server", JOptionPane.OK_CANCEL_OPTION);
         if (r != JOptionPane.OK_OPTION) return;
         try {
-            ConnectionProfile profile = connectionProfile(engineF, hostF, portF, userF, passF, dbF);
+            ConnectionProfile profile = connectionProfile(hostF, portF, userF, passF, dbF);
             conn = connectionService.connect(profile);
             schema = dbF.getText().trim();
             debugger = new DebuggerService(conn, schema);
@@ -498,11 +491,12 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         setStatus("Connecting…", false);
         RequestProcessor.getDefault().post(() -> {
             try {
-                List<RoutineInfo> routines = debugger.initialize();
+                StartupResult startup = debugger.initializeWithRecovery();
                 SwingUtilities.invokeLater(() -> {
-                    setAvailableRoutines(routines);
+                    setAvailableRoutines(startup.routines());
                     setDebugActive(false);
                     setStatus("Connected to " + schema, false);
+                    showStartupRecovery(startup);
                 });
             } catch (DbgException ex) {
                 SwingUtilities.invokeLater(() -> showError("Connection failed: " + ex.getMessage()));
@@ -510,11 +504,10 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         });
     }
 
-    private static ConnectionProfile connectionProfile(JComboBox<DatabaseEngine> engine,
-            JTextField host, JTextField port, JTextField user, JPasswordField password,
+    private static ConnectionProfile connectionProfile(JTextField host, JTextField port,
+            JTextField user, JPasswordField password,
             JTextField database) {
-        return new ConnectionProfile((DatabaseEngine) engine.getSelectedItem(), host.getText().trim(),
-            Integer.parseInt(port.getText().trim()), user.getText().trim(),
+        return new ConnectionProfile(host.getText().trim(), Integer.parseInt(port.getText().trim()), user.getText().trim(),
             new String(password.getPassword()), database.getText().trim());
     }
 
@@ -530,27 +523,6 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
         Properties properties = dbConn.getConnectionProperties();
         return connectionService.connectUrl(url, dbConn.getDriverClass(), properties,
                                             dbConn.getUser(), dbConn.getPassword());
-    }
-
-    private void disconnect() {
-        if (debugActive) {
-            showError("Stop the active debug session before disconnecting.");
-            return;
-        }
-        stopSession();
-        try { if (ownsConnection && conn != null) conn.close(); } catch (SQLException ignored) {}
-        conn = null; debugger = null; schema = null; deployment = null;
-        ownsConnection = false;
-        availableRoutines.clear();
-        filteringRoutines = true;
-        routineCombo.removeAllItems();
-        routineCombo.getEditor().setItem("");
-        filteringRoutines = false;
-        currentRoutine = null; currentRoutineType = null;
-        sourcePanel.setSource(null); logPanel.clear(); watchPanel.clearValues();
-        watchPrev.clear(); watchChanged.clear(); hideBanner();
-        setDebugActive(false);
-        setStatus("Disconnected", false);
     }
 
     // ── Routine loading ───────────────────────────────────────────────────────
@@ -698,12 +670,29 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     public void componentClosed() {
         // When the window is closed (X button or programmatically), send 'continue'
         // to any blocked _dbg_checkpoint wait loops so they don't spin indefinitely.
-        if (session != null && debugger != null) {
-            stopSession();
-            RequestProcessor.getDefault().post(() -> debugger.unblock(deployment));
-        } else {
-            stopSession();
-        }
+        stopSession();
+        if (isChild) return;
+
+        DebuggerService closingDebugger = debugger;
+        DebugDeployment closingDeployment = deployment;
+        Connection closingConnection = ownsConnection ? conn : null;
+        conn = null;
+        debugger = null;
+        schema = null;
+        deployment = null;
+        ownsConnection = false;
+        debugActive = false;
+        currentRoutine = null;
+        currentRoutineType = null;
+        availableRoutines.clear();
+
+        RequestProcessor.getDefault().post(() -> {
+            try {
+                connectionService.shutdown(closingDebugger, closingDeployment, closingConnection);
+            } catch (DbgException ex) {
+                LOG.log(Level.SEVERE, "Debugger shutdown failed", ex);
+            }
+        });
     }
 
     // ── Session management ────────────────────────────────────────────────────
@@ -789,8 +778,6 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
             btnDeploy.setEnabled(!active && debugger != null);
             btnStop.setEnabled(active);
             btnConnect.setVisible(debugger == null);
-            btnDisconnect.setVisible(debugger != null);
-            btnDisconnect.setEnabled(!active && debugger != null);
             routineCombo.setEnabled(!active && debugger != null);
         }
     }
@@ -899,6 +886,16 @@ public class DebuggerTopComponent extends TopComponent implements DebugEventList
     private void showError(String msg) {
         JOptionPane.showMessageDialog(this, msg, "Error", JOptionPane.ERROR_MESSAGE);
         setStatus(msg, false);
+    }
+
+    private void showStartupRecovery(StartupResult startup) {
+        if (!startup.recoveredAnything()) return;
+        String names = startup.recoveredRoutines().stream().map(r -> r.name).sorted()
+            .collect(java.util.stream.Collectors.joining(", "));
+        JOptionPane.showMessageDialog(this,
+            "A previous debug session left debugger artifacts behind.\n" +
+            "Saved original DDL was restored and orphaned generated routines were removed for:\n\n" + names,
+            "Previous debug session recovered", JOptionPane.WARNING_MESSAGE);
     }
 
 }

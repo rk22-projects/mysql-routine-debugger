@@ -94,12 +94,7 @@
             <artifactId>org-netbeans-modules-db</artifactId>
             <version>${nb.version}</version>
         </dependency>
-        <!-- JDBC drivers packaged with the NetBeans module. -->
-        <dependency>
-            <groupId>org.mariadb.jdbc</groupId>
-            <artifactId>mariadb-java-client</artifactId>
-            <version>${mariadb.connector.version}</version>
-        </dependency>
+        <!-- MySQL Connector/J packaged with the NetBeans module. -->
         <dependency>
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
