@@ -16,26 +16,30 @@ The extension runs its Java debugger server in the background and stores databas
 - A reachable MySQL or MariaDB server
 - A database account allowed to inspect, create, replace, and restore routines and to create supporting schema objects
 
-## Install
+## Install from the Visual Studio Marketplace
 
-1. Open the project's [latest release](https://github.com/rk22-projects/mysql-routine-debugger/releases/latest).
-2. Download the Visual Studio Code extension file ending in `.vsix`.
-3. In Visual Studio Code, open the **Extensions** view.
-4. Open the **Views and More Actions** (`...`) menu and select **Install from VSIX...**.
-5. Choose the downloaded `.vsix` file and reload Visual Studio Code if prompted.
+1. Install a Java 17 or newer runtime if one is not already available.
+2. In Visual Studio Code, open the **Extensions** view (`Ctrl+Shift+X` on Windows and Linux, or `Cmd+Shift+X` on macOS).
+3. Search for **MySQL Routine Debugger** by **RK22**, or open the extension in the [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=RK22.mysql-routine-debugger).
+4. Select **Install** and reload Visual Studio Code if prompted.
+5. Run **MySQL Routine Debugger: Open Debugger** from the Command Palette.
 
-You can also install it from a terminal:
+You can install the Marketplace version from a terminal instead:
 
 ```shell
-code --install-extension mysql-routine-debugger-<version>.vsix
+code --install-extension RK22.mysql-routine-debugger
 ```
 
-The latest-release link will become available when the first packaged release is published.
+The extension normally discovers Java automatically. If it cannot find Java, open Visual Studio Code Settings, search for **MySQL Routine Debugger: Java Path**, and set `mysqlRoutineDebugger.javaPath` to a Java 17+ executable.
+
+### Manual VSIX installation
+
+To install without the Marketplace, download the `.vsix` file from the project's [latest release](https://github.com/rk22-projects/mysql-routine-debugger/releases/latest). In the **Extensions** view, open the **Views and More Actions** (`...`) menu, select **Install from VSIX...**, and choose the downloaded file.
 
 ## Open the debugger
 
 1. Run **MySQL Routine Debugger: Open Debugger** from the Command Palette, or select its status-bar item.
-2. Select **Connect**, choose MySQL or MariaDB, and enter the connection details. Use **Disconnect** when finished; disconnecting is disabled during an active debug session.
+2. Select **Connect** and enter the MySQL or MariaDB server connection details. The bundled MySQL Connector/J is used for both; the debugger has no separate connection-type or JDBC-driver choice. Use **Disconnect** when finished; disconnecting is disabled during an active debug session.
 3. Type in the routine field to filter its autocomplete dropdown, then choose a routine to load it automatically. Add breakpoints and start debugging.
 4. Invoke the routine from another database client.
 5. Use Continue (`F5`), Step Into (`F7`), Step Out (`Ctrl+F7`), or Step Over (`F8`) when execution pauses, then stop the session when finished. Step Into and Step Out appear as separate buttons only where each operation applies.

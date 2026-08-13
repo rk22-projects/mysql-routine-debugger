@@ -27,8 +27,8 @@ Use this frontend when you want the complete debugging workflow without installi
    java -jar mysql-routine-debugger-standalone.jar
    ```
 
-The latest-release link will become available when the first packaged release is published. Use the package matching your operating system because it contains platform-specific JavaFX libraries.
+Use the package matching your operating system because it contains platform-specific JavaFX libraries.
 
 ## Start debugging
 
-Connect to a development or test database, select a routine, add breakpoints, and start debugging. Invoke the instrumented routine from a separate SQL client or application connection, then use Continue, Step Into, Step Over, or Step Out when execution pauses.
+Connect to a development or test database, select a routine, add breakpoints, and start debugging. The bundled MySQL Connector/J is used for both MySQL and compatible MariaDB servers; the debugger has no separate connection-type or JDBC-driver choice. Invoke the instrumented routine from a separate SQL client or application connection, then use Continue, Step Into, Step Over, or Step Out when execution pauses.

@@ -23,10 +23,8 @@ The frontend supports breakpoints, Continue, Step Into, Step Over, Step Out, var
 4. Select **Add Plugins**, choose the downloaded `.nbm` file, and complete the installer.
 5. Restart NetBeans if prompted.
 
-The latest-release link will become available when the first packaged release is published.
-
 ## Open the debugger
 
 Open **Window > MySQL Routine Debugger**. You can also find a debugger action on stored procedures and functions in the NetBeans Database Explorer.
 
-Connect to a development or test database, select a routine, add breakpoints, and start debugging. Invoke the instrumented routine from a separate SQL client or application connection.
+Connect to a development or test database, select a routine, add breakpoints, and start debugging. The debugger uses MySQL Connector/J for both MySQL and compatible MariaDB servers and does not present a separate connection-type or JDBC-driver choice. Invoke the instrumented routine from a separate SQL client or application connection.
