@@ -1,8 +1,4 @@
-# MySQL Routine Debugger
-
-<p align="center">
-  <img src="docs/images/icon-1024.png" alt="MySQL Routine Debugger icon" width="180">
-</p>
+<h1><img src="docs/images/icon-1024.png" alt="" width="32" height="32"> MySQL Routine Debugger</h1>
 
 Debug MySQL and MariaDB stored procedures and functions with breakpoints, stepping, watches, variable inspection, and execution logs.
 
