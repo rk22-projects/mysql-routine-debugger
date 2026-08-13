@@ -2,8 +2,9 @@
   "name": "mysql-routine-debugger",
   "displayName": "MySQL Routine Debugger",
   "description": "Debug MySQL and MariaDB stored procedures and functions with breakpoints, stepping, watches, and execution logs.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "rk22",
+  "icon": "resources/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/rk22-projects/mysql-routine-debugger.git"

@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.rk22</groupId>
         <artifactId>mysql-routine-debugger-parent</artifactId>
-        <version>0.1.1</version>
+        <version>0.1.2</version>
     </parent>
 
     <artifactId>mysql-routine-debugger-core</artifactId>
