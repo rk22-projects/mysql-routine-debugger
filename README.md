@@ -1,5 +1,9 @@
 # MySQL Routine Debugger
 
+<p align="center">
+  <img src="docs/images/icon-1024.png" alt="MySQL Routine Debugger icon" width="180">
+</p>
+
 Debug MySQL and MariaDB stored procedures and functions with breakpoints, stepping, watches, variable inspection, and execution logs.
 
 [![MySQL Routine Debugger paused in Visual Studio Code](docs/images/vscode_mysql_debugger.png)](docs/images/vscode_mysql_debugger.png)
