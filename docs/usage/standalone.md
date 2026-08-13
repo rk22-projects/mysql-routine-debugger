@@ -6,8 +6,7 @@ This guide covers the complete standalone application workflow. See the [standal
 
 The connection dialog opens when the application starts. Enter the host, port, user, password, and database/schema. Use the ellipsis button beside the database field to discover schemas with the entered credentials, then select **Connect**. The last successful connection profile is restored the next time the application starts.
 
-> [!NOTE]
-> **Screenshot needed:** the standalone connection dialog with representative, non-sensitive values and the database discovery control visible. Save it as `../images/standalone_connection.png`, then replace this callout with `![Standalone connection dialog](../images/standalone_connection.png)`.
+![Standalone connection dialog](../images/standalone_connection.png)
 
 ## Select a routine and add breakpoints
 
@@ -15,8 +14,7 @@ Type in the routine field to filter procedures and functions, then select one to
 
 Click the gutter beside an executable source line to set or remove a breakpoint. You can also select a source line and press `F9`. Blank lines, comments, and other non-executable lines cannot receive breakpoints. Breakpoints are retained for that routine.
 
-> [!NOTE]
-> **Screenshot needed:** the full standalone window with a loaded routine, one breakpoint, Watch panel, and expanded Variable log. Save it as `../images/standalone_debugger.png`, then replace this callout with `![Standalone MySQL Routine Debugger](../images/standalone_debugger.png)`.
+![Standalone MySQL Routine Debugger](../images/standalone_debugger.png)
 
 ## Start and control a session
 

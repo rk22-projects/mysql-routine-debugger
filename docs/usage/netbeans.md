@@ -9,8 +9,7 @@ Use either of these entry points:
 - Open **Window > MySQL Routine Debugger** and enter the host, port, user, password, and database/schema in the connection dialog. The ellipsis button beside the database field discovers schemas using the entered server credentials.
 - In **Services > Databases**, expand a connected database, right-click a stored procedure or function, and select **Debug in MySQL Routine Debugger…**. The debugger opens the routine using a dedicated control connection, leaving the SQL connection available for invocation.
 
-> [!NOTE]
-> **Screenshot needed:** the NetBeans Services tree with a routine's **Debug in MySQL Routine Debugger…** action visible. Save it as `../images/netbeans_database_explorer.png`, then replace this callout with `![Opening a routine from NetBeans Database Explorer](../images/netbeans_database_explorer.png)`.
+![Opening a routine from NetBeans Database Explorer](../images/netbeans_database_explorer.png)
 
 ## Select a routine and add breakpoints
 
@@ -18,8 +17,7 @@ When opened manually, type in the routine field to filter procedures and functio
 
 Click the gutter beside an executable source line to set or remove a breakpoint. You can also place the caret on a line and press `F9`. Blank lines, comments, and other non-executable lines cannot receive breakpoints. Breakpoints are retained for that routine.
 
-> [!NOTE]
-> **Screenshot needed:** the full NetBeans debugger window with a loaded routine, one breakpoint, Watches, and Variable log visible. Save it as `../images/netbeans_debugger.png`, then replace this callout with `![MySQL Routine Debugger in NetBeans](../images/netbeans_debugger.png)`.
+![MySQL Routine Debugger in NetBeans](../images/netbeans_debugger.png)
 
 ## Start and control a session
 

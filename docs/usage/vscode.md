@@ -6,8 +6,7 @@ This guide covers the complete Visual Studio Code workflow. See the [extension R
 
 Run **MySQL Routine Debugger: Open Debugger** from the Command Palette, or select the debugger item in the status bar. Opening the panel displays the connection dialog when no connection is active.
 
-> [!NOTE]
-> **Screenshot needed:** the VS Code connection dialog with representative, non-sensitive values. Save it as `../images/vscode_connection.png`, then replace this callout with `![VS Code connection dialog](../images/vscode_connection.png)`.
+![VS Code connection dialog](../images/vscode_connection.png)
 
 Enter the host, port, user, password, and database/schema, then select **Connect**. The non-secret fields are retained in VS Code settings and passwords are stored in VS Code secret storage. Keep this connection open throughout the debugging session.
 
