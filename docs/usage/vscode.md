@@ -12,7 +12,7 @@ Enter the host, port, user, password, and database/schema, then select **Connect
 
 ## Select a routine and add breakpoints
 
-Type in the routine field to filter procedures and functions, or use its arrow to show every routine. Selecting a routine loads its original definition in the source pane.
+Type in the routine field to filter procedures and functions, or use its arrow to show every routine. Selecting a routine loads its definition in the source pane.
 
 Set or remove a breakpoint by selecting an executable line's gutter, or place the pointer on the line and press `F9`. A red marker identifies a breakpoint. Blank lines, comments, and other non-executable lines cannot receive breakpoints. Breakpoints are retained for that routine.
 
@@ -41,9 +41,7 @@ Step Into appears only for the root routine and Step Out only while viewing a ca
 
 ### Important behavior during debugging
 
-- Starting a session temporarily replaces the selected routine and supported direct callees with debugger-managed versions. Other database users can encounter those versions until you select **Stop**.
-- Invoke only one instance of the debugged call chain at a time. Concurrent invocations share the deployed debug state and are not supported.
-- Do not edit, rename, or drop a deployed routine or any `_dbg_*` or `_orig_*` object while debugging.
+- Invoke only one instance of the debugged call chain at a time. Concurrent invocations share the same debug state and are not supported.
 - Pausing requires debugger checkpoints to commit database state. Do not use a debug run to validate transaction or rollback behavior.
 - The SQL client that invoked the routine remains blocked while execution is paused. Continue, step, stop, or reset the session before closing that client.
 
@@ -58,10 +56,8 @@ Step Into appears only for the root routine and Step Out only while viewing a ca
 
 ## Stop, disconnect, and recover
 
-Select **Stop** before editing another routine, changing connections, or closing the debugger. Stop unblocks paused calls and restores the original definitions of the root routine and its prepared callees. Closing the debugger panel then closes its database connection.
+Select **Stop** before editing another routine, changing connections, or closing the debugger. Stop ends the active session and unblocks a paused call. Closing the debugger panel then closes its database connection.
 
-If VS Code or the database connection ends unexpectedly, reconnect to the same schema. The debugger checks for an interrupted deployment, restores saved original definitions, removes orphaned generated routines, and reports what it recovered.
+If VS Code or the database connection ends unexpectedly, reconnect to the same schema. The debugger checks for an interrupted session, performs recovery, and reports the affected routines.
 
-Use **Reset All Debug Changes** from the overflow menu only when normal Stop or automatic recovery cannot clean up a session. Reset affects all debugger deployments in the connected schema, restores every saved original routine, removes orphaned generated routines, and reinitializes the debugger infrastructure.
-
-See the [documentation screenshot checklist](../screenshots.md) for the images still needed by this guide.
+Use **Reset All Debug Changes** from the overflow menu only when normal Stop or automatic recovery cannot clean up a session. Reset affects all debugger sessions in the connected schema.

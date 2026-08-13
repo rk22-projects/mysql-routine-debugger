@@ -13,7 +13,7 @@ Use either of these entry points:
 
 ## Select a routine and add breakpoints
 
-When opened manually, type in the routine field to filter procedures and functions, then select one to load its original definition. When opened from Database Explorer, the selected routine loads automatically.
+When opened manually, type in the routine field to filter procedures and functions, then select one to load its definition. When opened from Database Explorer, the selected routine loads automatically.
 
 Click the gutter beside an executable source line to set or remove a breakpoint. You can also place the caret on a line and press `F9`. Blank lines, comments, and other non-executable lines cannot receive breakpoints. Breakpoints are retained for that routine.
 
@@ -42,9 +42,7 @@ Step Into opens a child debugger tab for the called routine. The child tab provi
 
 ### Important behavior during debugging
 
-- Starting a session temporarily replaces the selected routine and supported direct callees with debugger-managed versions. Other database users can encounter those versions until you select **Stop Debugging**.
-- Invoke only one instance of the debugged call chain at a time. Concurrent invocations share the deployed debug state and are not supported.
-- Do not edit, rename, or drop a deployed routine or any `_dbg_*` or `_orig_*` object while debugging.
+- Invoke only one instance of the debugged call chain at a time. Concurrent invocations share the same debug state and are not supported.
 - Pausing requires debugger checkpoints to commit database state. Do not use a debug run to validate transaction or rollback behavior.
 - The SQL client that invoked the routine remains blocked while execution is paused. Continue, step, stop, or reset the session before closing that client.
 
@@ -59,10 +57,8 @@ Step Into opens a child debugger tab for the called routine. The child tab provi
 
 ## Stop and recover
 
-Select **Stop Debugging** before switching connections or closing the debugger. This unblocks paused calls and restores the original definitions of the selected routine and its prepared callees.
+Select **Stop Debugging** before switching connections or closing the debugger. This ends the active session and unblocks a paused call.
 
-If NetBeans or the connection ends unexpectedly, reconnect to the same schema. The debugger automatically restores saved original definitions, removes orphaned generated routines, and reports the recovered routines.
+If NetBeans or the connection ends unexpectedly, reconnect to the same schema. The debugger checks for an interrupted session, performs recovery, and reports the affected routines.
 
-Use **Reset all debug changes…** from the overflow menu only when normal Stop or automatic recovery cannot clean up a session. Reset affects all debugger deployments in the connected schema, restores every saved original routine, removes orphaned generated routines, and reinitializes the debugger infrastructure.
-
-See the [documentation screenshot checklist](../screenshots.md) for the images still needed by this guide.
+Use **Reset all debug changes…** from the overflow menu only when normal Stop or automatic recovery cannot clean up a session. Reset affects all debugger sessions in the connected schema.

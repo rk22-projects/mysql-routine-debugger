@@ -7,12 +7,12 @@ Debug MySQL and MariaDB stored procedures and functions with breakpoints, steppi
 *A routine paused in the Visual Studio Code frontend. Click the image to view it at full size.*
 
 > [!CAUTION]
-> **Early alpha software:** this project has undergone only limited testing. Features may be incomplete, behavior may change without notice, and defects may modify routines or other database objects incorrectly. Do not use it with production databases. Use only isolated development or test environments and ensure you have current backups.
+> **Early alpha software:** this project has undergone only limited testing. Features may be incomplete, behavior may change without notice, and defects may affect database objects or data. Do not use it with production databases. Use only isolated development or test environments and ensure you have current backups.
 
 Issue reports and help with collaborative testing are very welcome. If you try the debugger, please [open an issue](https://github.com/rk22-projects/mysql-routine-debugger/issues) to share problems, suggestions, or successful test results. Every constructive report helps make the project safer and more useful.
 
 > [!WARNING]
-> Use the debugger only on development or test databases. The connected account must be authorized to inspect, create, replace, and restore routines and to create supporting objects in the selected schema.
+> Use the debugger only on development or test databases. The connected account must have the required routine and schema privileges.
 
 ## Frontends
 

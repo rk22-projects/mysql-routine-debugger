@@ -1,7 +1,7 @@
 # MySQL Routine Debugger for Apache NetBeans
 
 > [!CAUTION]
-> **Early alpha software:** this project has undergone only limited testing. Features may be incomplete, behavior may change without notice, and defects may modify routines or other database objects incorrectly. Do not use it with production databases. Use only isolated development or test environments and ensure you have current backups.
+> **Early alpha software:** this project has undergone only limited testing. Features may be incomplete, behavior may change without notice, and defects may affect database objects or data. Do not use it with production databases. Use only isolated development or test environments and ensure you have current backups.
 
 Issue reports and help with collaborative testing are very welcome. If you try the debugger, please [open an issue](https://github.com/rk22-projects/mysql-routine-debugger/issues) to share problems, suggestions, or successful test results. Every constructive report helps make the project safer and more useful.
 
@@ -13,7 +13,7 @@ The frontend supports breakpoints, Continue, Step Into, Step Over, Step Out, var
 
 - Apache NetBeans 27 or a compatible newer release
 - A reachable MySQL or MariaDB server
-- A database account allowed to inspect, create, replace, and restore routines and to create supporting schema objects
+- A database account with the required routine and schema privileges
 
 ## Install
 
